@@ -1,0 +1,48 @@
+spring:
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/journalist_bot_test
+    redis:
+      host: localhost
+      port: 6379
+  datasource:
+    url: jdbc:postgresql://localhost:5432/postgres
+    username: postgres
+    password: "123789"
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        default_schema: journalist_bot_test
+
+bot:
+  discord:
+    token: ""
+    news-channel-id: ""
+  telegram:
+    token: ""
+    username: ""
+  zalo:
+    oa-token: ""
+  news-api:
+    key: test-key
+    base-url: https://newsapi.org/v2
+  ai:
+    anthropic:
+      api-key: ""   # No API calls in tests — AISummarizerService falls back to plain format
+    primary-provider: claude
+  schedule:
+    initial-delay-ms: 999999999
+    ai-news-interval-ms: 999999999
+    prog-news-interval-ms: 999999999
+    gamedev-news-interval-ms: 999999999
+    news-fetch-limit: 5
+  dedup:
+    redis-ttl-hours: 1
+    mongo-ttl-days: 1
+
+logging:
+  level:
+    com.maru.journalistbot: DEBUG
+    net.dv8tion.jda: ERROR
