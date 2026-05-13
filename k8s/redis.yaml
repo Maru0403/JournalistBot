@@ -1,0 +1,54 @@
+---
+# ── Redis Deployment ──────────────────────────────────────────────────────
+# Redis is ephemeral by design (TTL-based dedup cache) → Deployment not StatefulSet.
+# Data loss on pod restart is acceptable — MongoDB is the persistent fallback.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: journalist-redis
+  namespace: journalist-bot
+  labels:
+    app: journalist-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: journalist-redis
+  template:
+    metadata:
+      labels:
+        app: journalist-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+---
+# ── Redis Service (ClusterIP — internal only) ─────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: journalist-redis
+  namespace: journalist-bot
+spec:
+  type: ClusterIP
+  selector:
+    app: journalist-redis
+  ports:
+    - port: 6379
+      targetPort: 6379

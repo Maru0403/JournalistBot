@@ -32,3 +32,6 @@ Thumbs.db
 
 # ─── Docker ───────────────────────────────────────
 docker-compose.override.yml
+
+# ─── Kubernetes — never commit filled-in secrets ──
+k8s/secret.local.yaml

@@ -1,0 +1,74 @@
+---
+# ── MongoDB PersistentVolumeClaim ──────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-pvc
+  namespace: journalist-bot
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  # storageClassName: standard  # Uncomment and set for your cloud provider
+
+---
+# ── MongoDB StatefulSet ────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: journalist-mongodb
+  namespace: journalist-bot
+  labels:
+    app: journalist-mongodb
+spec:
+  serviceName: journalist-mongodb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: journalist-mongodb
+  template:
+    metadata:
+      labels:
+        app: journalist-mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:7.0
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: mongodb-data
+              mountPath: /data/db
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            exec:
+              command: ["mongosh", "--eval", "db.adminCommand('ping')"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: mongodb-data
+          persistentVolumeClaim:
+            claimName: mongodb-pvc
+
+---
+# ── MongoDB Service (ClusterIP — internal only) ────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: journalist-mongodb
+  namespace: journalist-bot
+spec:
+  type: ClusterIP
+  selector:
+    app: journalist-mongodb
+  ports:
+    - port: 27017
+      targetPort: 27017

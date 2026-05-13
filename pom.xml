@@ -94,6 +94,21 @@
             </exclusions>
         </dependency>
 
+        <!-- TELEGRAM: TelegramBots 6.9.7 — Java Telegram Bot API -->
+        <!-- Docs: https://github.com/rubenlagus/TelegramBots -->
+        <dependency>
+            <groupId>org.telegram</groupId>
+            <artifactId>telegrambots</artifactId>
+            <version>6.9.7.1</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <!-- CACHE: Spring Cache abstraction (@Cacheable, @CacheEvict) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-cache</artifactId>
+        </dependency>
+
         <!-- RESILIENCE: Retry with backoff -->
         <dependency>
             <groupId>org.springframework.retry</groupId>

@@ -2,6 +2,7 @@ package com.maru.journalistbot.application.news;
 
 import com.maru.journalistbot.domain.model.NewsCategory;
 import com.maru.journalistbot.domain.model.RssSource;
+import com.maru.journalistbot.infrastructure.fetcher.HnFetcher;
 import com.maru.journalistbot.infrastructure.fetcher.NewsApiFetcher;
 import com.maru.journalistbot.infrastructure.fetcher.RedditFetcher;
 import com.maru.journalistbot.infrastructure.fetcher.RssFetcher;
@@ -14,12 +15,14 @@ import java.util.List;
  * Covers: Claude, Gemini, Anthropic, OpenAI, LLMs.
  *
  * Phase 2: Added Reddit sources (r/MachineLearning, r/artificial, r/LocalLLaMA).
+ * Phase 1 fix: Added HN Algolia queries for top AI stories on Hacker News.
  */
 @Service
 public class AINewsService extends AbstractNewsService {
 
-    public AINewsService(RssFetcher rssFetcher, NewsApiFetcher newsApiFetcher, RedditFetcher redditFetcher) {
-        super(rssFetcher, newsApiFetcher, redditFetcher);
+    public AINewsService(RssFetcher rssFetcher, NewsApiFetcher newsApiFetcher,
+                         RedditFetcher redditFetcher, HnFetcher hnFetcher) {
+        super(rssFetcher, newsApiFetcher, redditFetcher, hnFetcher);
     }
 
     @Override
@@ -63,5 +66,15 @@ public class AINewsService extends AbstractNewsService {
     @Override
     protected List<String> getRedditSubreddits() {
         return List.of("MachineLearning", "artificial", "LocalLLaMA", "singularity");
+    }
+
+    /** Phase 1 fix: HN top stories about AI topics */
+    @Override
+    protected List<String> getHnQueries() {
+        return List.of(
+                "large language model",
+                "Claude Anthropic",
+                "GPT OpenAI"
+        );
     }
 }

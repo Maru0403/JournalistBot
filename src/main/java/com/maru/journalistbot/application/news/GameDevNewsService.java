@@ -2,6 +2,7 @@ package com.maru.journalistbot.application.news;
 
 import com.maru.journalistbot.domain.model.NewsCategory;
 import com.maru.journalistbot.domain.model.RssSource;
+import com.maru.journalistbot.infrastructure.fetcher.HnFetcher;
 import com.maru.journalistbot.infrastructure.fetcher.NewsApiFetcher;
 import com.maru.journalistbot.infrastructure.fetcher.RedditFetcher;
 import com.maru.journalistbot.infrastructure.fetcher.RssFetcher;
@@ -15,12 +16,14 @@ import java.util.List;
  *
  * Added in Phase 2 to resolve the GAME_DEV enum orphan from Phase 1,
  * and to support the project owner's goal of learning game programming.
+ * Phase 1 fix: Added HN Algolia queries for top game dev stories.
  */
 @Service
 public class GameDevNewsService extends AbstractNewsService {
 
-    public GameDevNewsService(RssFetcher rssFetcher, NewsApiFetcher newsApiFetcher, RedditFetcher redditFetcher) {
-        super(rssFetcher, newsApiFetcher, redditFetcher);
+    public GameDevNewsService(RssFetcher rssFetcher, NewsApiFetcher newsApiFetcher,
+                              RedditFetcher redditFetcher, HnFetcher hnFetcher) {
+        super(rssFetcher, newsApiFetcher, redditFetcher, hnFetcher);
     }
 
     @Override
@@ -62,5 +65,11 @@ public class GameDevNewsService extends AbstractNewsService {
     @Override
     protected List<String> getRedditSubreddits() {
         return List.of("gamedev", "indiegaming", "Unity3D", "godot");
+    }
+
+    /** Phase 1 fix: HN top stories about game development */
+    @Override
+    protected List<String> getHnQueries() {
+        return List.of("game development engine");
     }
 }

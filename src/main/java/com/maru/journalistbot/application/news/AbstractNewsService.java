@@ -3,6 +3,7 @@ package com.maru.journalistbot.application.news;
 import com.maru.journalistbot.domain.model.NewsArticle;
 import com.maru.journalistbot.domain.model.RssSource;
 import com.maru.journalistbot.domain.port.NewsService;
+import com.maru.journalistbot.infrastructure.fetcher.HnFetcher;
 import com.maru.journalistbot.infrastructure.fetcher.NewsApiFetcher;
 import com.maru.journalistbot.infrastructure.fetcher.RedditFetcher;
 import com.maru.journalistbot.infrastructure.fetcher.RssFetcher;
@@ -15,11 +16,14 @@ import java.util.List;
 
 /**
  * Template Method pattern — shared fetch/merge/dedup logic for all news services.
- * Subclasses only define their RSS sources, NewsAPI keywords, and Reddit subreddits.
+ * Subclasses only define their RSS sources, NewsAPI keywords, Reddit subreddits,
+ * and HN Algolia queries.
  *
- * Phase 2: Added RedditFetcher support via getRedditSubreddits() hook.
+ * Phase 1: RSS feeds + Scheduler
+ * Phase 2: Added NewsAPI + Reddit + AI summarization
+ * Phase 1 fix: Added HN (Hacker News) Algolia API via getHnQueries() hook.
  *   - Default returns empty list → backward compatible (OCP respected).
- *   - Subclasses opt in by overriding getRedditSubreddits() only.
+ *   - Subclasses opt in by overriding getHnQueries() only.
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -28,6 +32,7 @@ public abstract class AbstractNewsService implements NewsService {
     protected final RssFetcher rssFetcher;
     protected final NewsApiFetcher newsApiFetcher;
     protected final RedditFetcher redditFetcher;
+    protected final HnFetcher hnFetcher;
 
     @Override
     public List<NewsArticle> fetchLatestNews(int limit) {
@@ -49,11 +54,18 @@ public abstract class AbstractNewsService implements NewsService {
             log.debug("[{}] NewsAPI [{}]: {} articles", getCategory(), keyword, fetched.size());
         }
 
-        // ── Layer 3: Reddit (Phase 2) ──────────────────────────────────────
+        // ── Layer 3: Reddit ────────────────────────────────────────────────
         for (String subreddit : getRedditSubreddits()) {
             List<NewsArticle> fetched = redditFetcher.fetchTopPosts(subreddit, 5, getCategory());
             all.addAll(fetched);
             log.debug("[{}] Reddit [r/{}]: {} posts", getCategory(), subreddit, fetched.size());
+        }
+
+        // ── Layer 4: Hacker News Algolia (Phase 1 fix) ────────────────────
+        for (String query : getHnQueries()) {
+            List<NewsArticle> fetched = hnFetcher.searchTopStories(query, 5, getCategory());
+            all.addAll(fetched);
+            log.debug("[{}] HN [query={}]: {} posts", getCategory(), query, fetched.size());
         }
 
         // ── Dedup by URL + sort newest first ──────────────────────────────
@@ -81,6 +93,15 @@ public abstract class AbstractNewsService implements NewsService {
      * Default: empty list — subclasses opt in by overriding.
      */
     protected List<String> getRedditSubreddits() {
+        return List.of();
+    }
+
+    /**
+     * Hacker News Algolia search queries.
+     * Default: empty list — subclasses opt in by overriding.
+     * Example: List.of("AI machine learning", "LLM GPT")
+     */
+    protected List<String> getHnQueries() {
         return List.of();
     }
 }

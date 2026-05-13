@@ -1,0 +1,35 @@
+# ─── Build artifacts ──────────────────────────────
+target/
+
+# ─── Maven wrapper (không cần nữa — dùng maven image) ──
+.mvn/
+mvnw
+mvnw.cmd
+
+# ─── Secrets & local config ───────────────────────
+.env
+.env.*
+application-local.yml
+application-secret.yml
+secrets/
+
+# ─── IDE ──────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+
+# ─── Git ──────────────────────────────────────────
+.git/
+.gitignore
+
+# ─── Docker ───────────────────────────────────────
+docker-compose*.yml
+.dockerignore
+
+# ─── Kubernetes ───────────────────────────────────
+k8s/
+
+# ─── OS ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.log

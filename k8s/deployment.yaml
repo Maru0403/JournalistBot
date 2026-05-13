@@ -1,0 +1,138 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: journalist-bot
+  namespace: journalist-bot
+  labels:
+    app: journalist-bot
+    version: latest
+spec:
+  replicas: 2  # 2 instances for HA — bot is stateless (state lives in Redis/PG/Mongo)
+  selector:
+    matchLabels:
+      app: journalist-bot
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0  # Zero downtime during deploy
+  template:
+    metadata:
+      labels:
+        app: journalist-bot
+        version: latest
+    spec:
+      # ── Security context ──────────────────────────────────────────────────
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      # ── Wait for dependencies before starting ─────────────────────────────
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.35
+          command: ['sh', '-c',
+            'until nc -z journalist-postgres 5432; do echo "Waiting for PostgreSQL..."; sleep 3; done']
+        - name: wait-for-mongodb
+          image: busybox:1.35
+          command: ['sh', '-c',
+            'until nc -z journalist-mongodb 27017; do echo "Waiting for MongoDB..."; sleep 3; done']
+        - name: wait-for-redis
+          image: busybox:1.35
+          command: ['sh', '-c',
+            'until nc -z journalist-redis 6379; do echo "Waiting for Redis..."; sleep 3; done']
+
+      containers:
+        - name: journalist-bot
+          # Image from GitHub Container Registry (pushed by CD pipeline)
+          image: ghcr.io/maru0403/journalistbot:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          # ── Environment from ConfigMap ──────────────────────────────────
+          envFrom:
+            - configMapRef:
+                name: journalist-bot-config
+
+          # ── Secrets as environment variables ───────────────────────────
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DISCORD_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: DISCORD_BOT_TOKEN
+            - name: DISCORD_NEWS_CHANNEL_ID
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: DISCORD_NEWS_CHANNEL_ID
+                  optional: true
+            - name: TELEGRAM_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: TELEGRAM_BOT_TOKEN
+            - name: TELEGRAM_BOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: TELEGRAM_BOT_USERNAME
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: GEMINI_API_KEY
+                  optional: true
+            - name: NEWS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: NEWS_API_KEY
+                  optional: true
+            # ── JVM Virtual Threads + tuning ──────────────────────────────
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:+UseVirtualThreads -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
+
+          # ── Resource limits ────────────────────────────────────────────
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+
+          # ── Health checks (via Spring Actuator) ────────────────────────
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 5
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+

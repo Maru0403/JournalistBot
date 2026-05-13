@@ -1,0 +1,83 @@
+---
+# ── PostgreSQL PersistentVolumeClaim ─────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: journalist-bot
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# ── PostgreSQL StatefulSet ────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: journalist-postgres
+  namespace: journalist-bot
+  labels:
+    app: journalist-postgres
+spec:
+  serviceName: journalist-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: journalist-postgres
+  template:
+    metadata:
+      labels:
+        app: journalist-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: "postgres"
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+
+---
+# ── PostgreSQL Service (ClusterIP — internal only) ────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: journalist-postgres
+  namespace: journalist-bot
+spec:
+  type: ClusterIP
+  selector:
+    app: journalist-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432

@@ -31,7 +31,12 @@ bot:
   ai:
     anthropic:
       api-key: ""   # No API calls in tests — AISummarizerService falls back to plain format
+    gemini:
+      api-key: ""   # Disabled in tests
     primary-provider: claude
+  hn:
+    base-url: https://hn.algolia.com/api/v1
+    min-points: 10
   schedule:
     initial-delay-ms: 999999999
     ai-news-interval-ms: 999999999

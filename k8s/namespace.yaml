@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: journalist-bot
+  labels:
+    app: journalist-bot
+    environment: production

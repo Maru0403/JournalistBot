@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: journalist-bot-svc
+  namespace: journalist-bot
+  labels:
+    app: journalist-bot
+spec:
+  type: ClusterIP
+  selector:
+    app: journalist-bot
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+---
+# Optional: Uncomment for external access without Ingress
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: journalist-bot-lb
+#   namespace: journalist-bot
+# spec:
+#   type: LoadBalancer
+#   selector:
+#     app: journalist-bot
+#   ports:
+#     - port: 80
+#       targetPort: 8080

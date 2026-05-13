@@ -1,19 +1,16 @@
 # ─── Stage 1: Build ───────────────────────────────────────────
-FROM eclipse-temurin:21-jdk-alpine AS builder
+# Use official Maven image — no need for maven-wrapper.jar, works on all OS
+FROM maven:3.9-eclipse-temurin-21-alpine AS builder
 
 WORKDIR /app
 
-# Copy Maven wrapper and pom.xml first (layer caching — only re-downloads deps if pom changes)
-COPY mvnw .
-COPY .mvn .mvn
+# Copy pom.xml first — layer cache: only re-download deps when pom changes
 COPY pom.xml .
-
-# Download dependencies (cached layer)
-RUN ./mvnw dependency:go-offline -B
+RUN mvn dependency:go-offline -B -q
 
 # Copy source and build
 COPY src src
-RUN ./mvnw package -DskipTests -B
+RUN mvn package -DskipTests -B -q
 
 # ─── Stage 2: Runtime ─────────────────────────────────────────
 FROM eclipse-temurin:21-jre-alpine
@@ -29,7 +26,7 @@ COPY --from=builder /app/target/*.jar app.jar
 
 # Actuator health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD wget -q --spider http://localhost:8080/actuator/health || exit 1
+  CMD wget -q --spider http://localhost:${SERVER_PORT:-8080}/actuator/health || exit 1
 
 EXPOSE 8080
 

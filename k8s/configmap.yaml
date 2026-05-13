@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: journalist-bot-config
+  namespace: journalist-bot
+  labels:
+    app: journalist-bot
+data:
+  # ── Server ──────────────────────────────────────────────────────
+  SERVER_PORT: "8080"
+
+  # ── Database endpoints ──────────────────────────────────────────
+  MONGODB_URI: "mongodb://journalist-mongodb:27017/journalist_bot"
+  POSTGRES_URL: "jdbc:postgresql://journalist-postgres:5432/postgres"
+  POSTGRES_USER: "postgres"
+  REDIS_HOST: "journalist-redis"
+  REDIS_PORT: "6379"
+
+  # ── Scheduling ──────────────────────────────────────────────────
+  INITIAL_DELAY_MS: "30000"
+  AI_NEWS_INTERVAL_MS: "1800000"
+  PROG_NEWS_INTERVAL_MS: "3600000"
+  GAMEDEV_NEWS_INTERVAL_MS: "7200000"
+
+  # ── AI Provider ─────────────────────────────────────────────────
+  # Set to "gemini" to use Gemini as primary (Claude becomes fallback)
+  AI_PRIMARY_PROVIDER: "claude"
+
+  # ── Spring Profile ───────────────────────────────────────────────
+  SPRING_PROFILES_ACTIVE: "prod"

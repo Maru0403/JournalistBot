@@ -1,5 +1,6 @@
 package com.maru.journalistbot.infrastructure.platform.discord;
 
+import com.maru.journalistbot.application.subscription.SubscriptionService;
 import com.maru.journalistbot.domain.model.NewsArticle;
 import com.maru.journalistbot.domain.model.NewsCategory;
 import com.maru.journalistbot.domain.model.Platform;
@@ -7,7 +8,6 @@ import com.maru.journalistbot.domain.port.NewsMessagePort;
 import lombok.extern.slf4j.Slf4j;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
-import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,19 +16,17 @@ import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Discord platform adapter — implements NewsMessagePort (DIP).
  *
- * Phase 2: Full JDA integration.
- *   - JDA initialized lazily via @EventListener(ApplicationReadyEvent) to avoid blocking startup.
- *   - If Discord token is absent/placeholder → stub mode (logs only, no crash).
- *   - Slash commands are registered in DiscordCommandListener.onReady().
- *
- * Why @EventListener instead of @PostConstruct:
- *   @PostConstruct blocks the Spring startup thread. Using ApplicationReadyEvent
- *   lets the entire context start first, then JDA connects asynchronously.
+ * Phase 3 update:
+ *   sendNews() now broadcasts to BOTH:
+ *     1. The static news-channel-id from application.yml (backward compatible)
+ *     2. All active DISCORD subscriptions stored in DB (via /start command)
+ *   This lets each server/channel subscribe independently.
  */
 @Component
 @Slf4j
@@ -41,12 +39,15 @@ public class DiscordAdapter implements NewsMessagePort {
     private String newsChannelId;
 
     private final DiscordCommandListener commandListener;
+    private final SubscriptionService subscriptionService;
 
     private JDA jda;
 
     @Autowired
-    public DiscordAdapter(DiscordCommandListener commandListener) {
-        this.commandListener = commandListener;
+    public DiscordAdapter(DiscordCommandListener commandListener,
+                          SubscriptionService subscriptionService) {
+        this.commandListener   = commandListener;
+        this.subscriptionService = subscriptionService;
     }
 
     /**
@@ -68,8 +69,6 @@ public class DiscordAdapter implements NewsMessagePort {
                     )
                     .addEventListeners(commandListener)
                     .build();
-            // Do NOT call awaitReady() — JDA connects in the background.
-            // DiscordCommandListener.onReady() fires when connection is established.
             log.info("[DISCORD] JDA connecting asynchronously...");
         } catch (Exception e) {
             log.error("[DISCORD] Failed to initialize JDA: {}", e.getMessage(), e);
@@ -83,27 +82,40 @@ public class DiscordAdapter implements NewsMessagePort {
         return Platform.DISCORD;
     }
 
+    /**
+     * Broadcast news to all target channels:
+     *   - Static news-channel-id from config (if configured)
+     *   - All active DB subscriptions registered via /start
+     * Deduplicates channelIds to avoid double-posting.
+     */
     @Override
     public void sendNews(List<NewsArticle> articles, NewsCategory category, String formattedMessage) {
         if (!isConnected()) {
             log.warn("[DISCORD] Not connected — skipping broadcast for {}", category.getDisplayName());
             return;
         }
-        if (newsChannelId == null || newsChannelId.isBlank()) {
-            log.warn("[DISCORD] news-channel-id not set — cannot broadcast. Set bot.discord.news-channel-id");
+
+        List<String> targetChannelIds = resolveTargetChannels();
+        if (targetChannelIds.isEmpty()) {
+            log.warn("[DISCORD] No target channels configured. Use /start in a channel or set bot.discord.news-channel-id");
             return;
         }
 
-        TextChannel channel = jda.getTextChannelById(newsChannelId);
-        if (channel == null) {
-            log.error("[DISCORD] Channel {} not found. Check bot has VIEW_CHANNEL + SEND_MESSAGES permission.", newsChannelId);
-            return;
-        }
+        log.info("[DISCORD] Broadcasting {} articles to {} channel(s) for {}",
+                articles.size(), targetChannelIds.size(), category.getDisplayName());
 
-        // Discord message limit: 2000 chars. Split if needed.
-        sendInChunks(channel, formattedMessage);
-        log.info("[DISCORD] Sent {} articles to channel #{} for {}", articles.size(),
-                channel.getName(), category.getDisplayName());
+        int successCount = 0;
+        for (String channelId : targetChannelIds) {
+            MessageChannel channel = jda.getTextChannelById(channelId);
+            if (channel == null) {
+                log.warn("[DISCORD] Channel {} not found (bot may lack permissions or was removed)", channelId);
+                continue;
+            }
+            sendInChunks(channel, formattedMessage);
+            successCount++;
+        }
+        log.info("[DISCORD] Broadcast complete: {}/{} channels received news for {}",
+                successCount, targetChannelIds.size(), category.getDisplayName());
     }
 
     @Override
@@ -112,7 +124,6 @@ public class DiscordAdapter implements NewsMessagePort {
             log.warn("[DISCORD] Not connected — cannot reply to user {}", userId);
             return;
         }
-        // Open DM channel and send message
         jda.retrieveUserById(userId).queue(
                 user -> user.openPrivateChannel().queue(
                         channel -> sendInChunks(channel, message),
@@ -134,6 +145,30 @@ public class DiscordAdapter implements NewsMessagePort {
     }
 
     /**
+     * Collect all target channel IDs for broadcasting:
+     *   1. Static config channel (backward compatibility)
+     *   2. DB-subscribed channels (via /start)
+     * Deduplicates to prevent double-posting.
+     */
+    private List<String> resolveTargetChannels() {
+        List<String> targets = new ArrayList<>();
+
+        // 1. Static config
+        if (newsChannelId != null && !newsChannelId.isBlank()) {
+            targets.add(newsChannelId);
+        }
+
+        // 2. DB subscriptions (add only if not already in list)
+        List<String> dbSubs = subscriptionService.getActiveSubscribers(Platform.DISCORD);
+        for (String sub : dbSubs) {
+            if (!targets.contains(sub)) {
+                targets.add(sub);
+            }
+        }
+        return targets;
+    }
+
+    /**
      * Split message into ≤2000 char chunks and send sequentially.
      * Discord rejects messages over 2000 characters.
      */
@@ -146,11 +181,10 @@ public class DiscordAdapter implements NewsMessagePort {
             return;
         }
 
-        // Split at last double-newline before 2000 chars
         int splitAt = message.lastIndexOf("\n\n", 2000);
         if (splitAt <= 0) splitAt = 2000;
 
         channel.sendMessage(message.substring(0, splitAt).trim()).queue();
-        sendInChunks(channel, message.substring(splitAt).trim()); // recursive for >4000 chars
+        sendInChunks(channel, message.substring(splitAt).trim());
     }
 }

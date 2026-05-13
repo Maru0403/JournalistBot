@@ -2,8 +2,10 @@ package com.maru.journalistbot.application.ai;
 
 import com.maru.journalistbot.domain.model.NewsArticle;
 import com.maru.journalistbot.infrastructure.ai.ClaudeApiClient;
+import com.maru.journalistbot.infrastructure.ai.GeminiApiClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -11,14 +13,15 @@ import java.util.List;
 /**
  * AI-powered summarizer for news articles.
  *
- * Phase 1 — Stub: formatted plain text (no API cost).
- * Phase 2 — Real: calls Claude Haiku to generate Vietnamese summaries,
- *            falls back gracefully to plain-text format if API key is absent.
+ * Provider strategy (configurable via bot.ai.primary-provider):
+ *   1. PRIMARY   — whichever provider is set as primary (claude / gemini)
+ *   2. FALLBACK  — the other provider, if primary fails or not configured
+ *   3. PLAIN TEXT — structured format with no AI (always available)
  *
- * Strategy:
- *   1. If ClaudeApiClient is configured → summarize with AI
- *   2. If Claude call fails → return plain-text format (never crash)
- *   3. If not configured → return plain-text format
+ * Phase 1: Stub — plain text only.
+ * Phase 2: Claude integration with plain-text fallback.
+ * Phase 2 fix: Added Gemini as second AI provider.
+ *   Claude → Gemini → plain text (never crashes regardless of key config).
  */
 @Service
 @RequiredArgsConstructor
@@ -26,34 +29,94 @@ import java.util.List;
 public class AISummarizerService {
 
     private final ClaudeApiClient claudeApiClient;
+    private final GeminiApiClient geminiApiClient;
+
+    @Value("${bot.ai.primary-provider:claude}")
+    private String primaryProvider;
 
     /**
      * Summarize articles for a given topic.
-     * Returns a Discord-formatted string (bold, links, emoji).
+     * Returns a Discord/Telegram-formatted string (bold, links, emoji).
+     *
+     * @param articles list of articles to summarize
+     * @param topic    display name for the topic (used in heading and prompt)
+     * @return formatted summary string
      */
     public String summarize(List<NewsArticle> articles, String topic) {
         if (articles.isEmpty()) {
             return "📭 Không có tin tức mới về **" + topic + "** vào lúc này.";
         }
 
-        // Try AI summarization first
-        if (claudeApiClient.isConfigured()) {
-            String aiSummary = summarizeWithClaude(articles, topic);
-            if (aiSummary != null && !aiSummary.isBlank()) {
-                log.info("[AI] Claude summarized {} articles for '{}'", articles.size(), topic);
-                return aiSummary;
-            }
-            log.warn("[AI] Claude call failed — falling back to plain format");
+        // ── Try AI providers in configured order ───────────────────────────
+        String aiResult = tryAiProviders(articles, topic);
+        if (aiResult != null && !aiResult.isBlank()) {
+            return aiResult;
         }
 
+        // ── Fallback: plain-text format (no AI) ────────────────────────────
+        log.info("[AI] All AI providers unavailable — using plain-text format for '{}'", topic);
         return formatWithoutAI(articles, topic);
     }
 
-    // ── Private helpers ──────────────────────────────────────────────────────
+    // ── Provider strategy ────────────────────────────────────────────────────
 
-    private String summarizeWithClaude(List<NewsArticle> articles, String topic) {
+    /**
+     * Try AI providers in order: primary → fallback.
+     * Returns the first successful response, or null if all fail.
+     */
+    private String tryAiProviders(List<NewsArticle> articles, String topic) {
+        if ("gemini".equalsIgnoreCase(primaryProvider)) {
+            // Primary: Gemini → Fallback: Claude
+            String result = tryGemini(articles, topic);
+            if (result != null) return result;
+
+            log.debug("[AI] Gemini failed/unconfigured — trying Claude as fallback");
+            return tryClaude(articles, topic);
+        } else {
+            // Primary: Claude (default) → Fallback: Gemini
+            String result = tryClaude(articles, topic);
+            if (result != null) return result;
+
+            log.debug("[AI] Claude failed/unconfigured — trying Gemini as fallback");
+            return tryGemini(articles, topic);
+        }
+    }
+
+    private String tryClaude(List<NewsArticle> articles, String topic) {
+        if (!claudeApiClient.isConfigured()) {
+            log.debug("[AI] Claude not configured — skipping");
+            return null;
+        }
+        String prompt = buildPrompt(articles, topic);
+        String result = claudeApiClient.chat(prompt, 600);
+        if (result != null) {
+            log.info("[AI] ✅ Claude summarized {} articles for '{}'", articles.size(), topic);
+        }
+        return result;
+    }
+
+    private String tryGemini(List<NewsArticle> articles, String topic) {
+        if (!geminiApiClient.isConfigured()) {
+            log.debug("[AI] Gemini not configured — skipping");
+            return null;
+        }
+        String prompt = buildPrompt(articles, topic);
+        String result = geminiApiClient.chat(prompt, 800);
+        if (result != null) {
+            log.info("[AI] ✅ Gemini summarized {} articles for '{}'", articles.size(), topic);
+        }
+        return result;
+    }
+
+    // ── Prompt builder (shared by both providers) ────────────────────────────
+
+    /**
+     * Build the summarization prompt — identical for Claude and Gemini.
+     * Limits to 5 articles to control token cost across both providers.
+     */
+    private String buildPrompt(List<NewsArticle> articles, String topic) {
         StringBuilder articleList = new StringBuilder();
-        int count = Math.min(articles.size(), 5); // limit to 5 to control token cost
+        int count = Math.min(articles.size(), 5);
 
         for (int i = 0; i < count; i++) {
             NewsArticle a = articles.get(i);
@@ -65,10 +128,10 @@ public class AISummarizerService {
             articleList.append("   URL: ").append(a.getUrl()).append("\n\n");
         }
 
-        String prompt = """
+        return """
                 Bạn là một bot tin tức kỹ thuật. Tóm tắt %d bài báo sau về "%s" bằng tiếng Việt.
 
-                Yêu cầu format (Discord markdown):
+                Yêu cầu format (Discord/Telegram markdown):
                 - Mỗi bài: in đậm tiêu đề (**tiêu đề**), 1-2 câu tóm tắt ngắn gọn, giữ link gốc
                 - Thêm emoji phù hợp (🤖 cho AI, 💻 cho code, 🎮 cho game)
                 - Phần mở đầu: "📰 **Tin tức mới về %s**"
@@ -78,13 +141,13 @@ public class AISummarizerService {
                 Bài viết:
                 %s
                 """.formatted(count, topic, topic, articleList);
-
-        return claudeApiClient.chat(prompt, 600);
     }
 
+    // ── Plain-text fallback ──────────────────────────────────────────────────
+
     /**
-     * Fallback formatter — no AI, just structured text.
-     * Used when API key is missing or Claude call fails.
+     * Fallback formatter — no AI, structured text only.
+     * Used when both Claude and Gemini are unavailable or fail.
      */
     private String formatWithoutAI(List<NewsArticle> articles, String topic) {
         StringBuilder sb = new StringBuilder();

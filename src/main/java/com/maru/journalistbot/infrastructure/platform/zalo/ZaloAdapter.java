@@ -5,7 +5,6 @@ import com.maru.journalistbot.domain.model.NewsCategory;
 import com.maru.journalistbot.domain.port.NewsMessagePort;
 import com.maru.journalistbot.domain.model.Platform;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -13,15 +12,20 @@ import java.util.List;
 /**
  * Zalo Official Account (OA) adapter — implements NewsMessagePort (DIP).
  *
- * Phase 1 — Stub: logs messages to console.
- * Phase 3 — Full: integrates Zalo OA REST API via WebClient.
+ * Phase 3: Zalo integration is temporarily DISABLED.
+ *   - isConnected() always returns false → BroadcastService skips this adapter.
+ *   - No crash, no log spam — silently excluded from broadcasts.
+ *   - Full implementation planned for a future phase when OA credentials are available.
+ *
+ * Future implementation notes:
+ *   - Broadcast to followers: POST https://openapi.zalo.me/v2.0/oa/broadcast/morethan200
+ *   - Send to specific user: POST https://openapi.zalo.me/v2.0/oa/message
+ *   - Token refresh: Zalo OA access tokens expire; need refresh via app-secret
+ *   - Webhook: POST /webhook/zalo — verify via SHA256(appSecret + data)
  */
 @Component
 @Slf4j
 public class ZaloAdapter implements NewsMessagePort {
-
-    @Value("${bot.zalo.oa-token:}")
-    private String oaToken;
 
     @Override
     public Platform getPlatform() {
@@ -30,22 +34,22 @@ public class ZaloAdapter implements NewsMessagePort {
 
     @Override
     public void sendNews(List<NewsArticle> articles, NewsCategory category, String formattedMessage) {
-        if (!isConnected()) {
-            log.warn("[ZALO] Not connected — skipping send. Configure Zalo OA credentials in application.yml");
-            return;
-        }
-        // TODO Phase 3: POST https://openapi.zalo.me/v2.0/oa/message
-        log.info("[ZALO] [STUB] Would broadcast {} articles: {}", articles.size(), category.getDisplayName());
+        // Disabled in Phase 3 — isConnected() = false prevents this from being called
+        log.debug("[ZALO] Disabled — skipping broadcast for {}", category.getDisplayName());
     }
 
     @Override
     public void replyToUser(String chatId, String message) {
-        // TODO Phase 3: send individual message
-        log.info("[ZALO] [STUB] Would reply to userId={}", chatId);
+        // Disabled in Phase 3
+        log.debug("[ZALO] Disabled — skipping reply to userId={}", chatId);
     }
 
+    /**
+     * Zalo integration is disabled in this phase.
+     * Change to return true and implement the above methods when OA credentials are ready.
+     */
     @Override
     public boolean isConnected() {
-        return oaToken != null && !oaToken.isBlank() && !oaToken.startsWith("your-");
+        return false;
     }
 }
