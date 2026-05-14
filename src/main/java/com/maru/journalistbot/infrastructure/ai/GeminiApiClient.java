@@ -131,4 +131,10 @@ public class GeminiApiClient {
             Map<String, Object> usageMetadata
     ) {}
 
-    @JsonIgnorePrope
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record Candidate(
+            Content content,
+            String finishReason,
+            int index
+    ) {}
+}

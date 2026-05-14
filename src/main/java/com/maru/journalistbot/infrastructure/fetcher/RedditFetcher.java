@@ -131,4 +131,30 @@ public class RedditFetcher {
     }
 
     /** Circuit Breaker fallback — return empty list, broadcast continues with other sources */
-    private List<NewsArticle> fallbackFetch(Str
+    private List<NewsArticle> fallbackFetch(String subreddit, int limit, NewsCategory category, Throwable ex) {
+        log.warn("[REDDIT] Circuit OPEN or error for r/{} — returning empty. Reason: {}",
+                subreddit, ex.getMessage());
+        return Collections.emptyList();
+    }
+
+    // ── Reddit JSON response shape ───────────────────────────────────────────
+    record RedditResponse(RedditData data) {}
+
+    record RedditData(List<RedditChild> children, String after) {}
+
+    record RedditChild(RedditPost data) {}
+
+    record RedditPost(
+            String id,
+            String title,
+            String url,
+            String selftext,
+            String permalink,
+            String subreddit,
+            int score,
+            int num_comments,
+            double created_utc,
+            boolean is_self,
+            boolean stickied
+    ) {}
+}

@@ -176,4 +176,28 @@ public class DiscordAdapter implements NewsMessagePort {
         for (String sub : dbSubs) {
             if (!targets.contains(sub)) {
                 targets.add(sub);
-      
+            }
+        }
+        return targets;
+    }
+
+    /**
+     * Split message into ≤2000 char chunks and send sequentially.
+     * Discord rejects messages over 2000 characters.
+     */
+    private void sendInChunks(MessageChannel channel, String message) {
+        if (message.length() <= 2000) {
+            channel.sendMessage(message).queue(
+                    ok  -> {},
+                    err -> log.error("[DISCORD] Failed to send message: {}", err.getMessage())
+            );
+            return;
+        }
+
+        int splitAt = message.lastIndexOf("\n\n", 2000);
+        if (splitAt <= 0) splitAt = 2000;
+
+        channel.sendMessage(message.substring(0, splitAt).trim()).queue();
+        sendInChunks(channel, message.substring(splitAt).trim());
+    }
+}

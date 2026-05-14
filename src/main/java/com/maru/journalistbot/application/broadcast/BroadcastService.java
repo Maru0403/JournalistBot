@@ -79,4 +79,12 @@ public class BroadcastService {
             adapter.sendNews(unsent, category, message);
             deduplicationService.markAllAsSent(unsent, platform);
             metricsService.recordArticlesSent(platform, category, unsent.size());
-            log.info
+            log.info("[BROADCAST] [{}] Successfully sent {} articles for {}", platform, unsent.size(), category);
+        } catch (Exception e) {
+            // Do NOT mark as sent — will retry naturally next scheduler cycle
+            metricsService.recordBroadcastError(platform, "send_error");
+            log.error("[BROADCAST] [{}] Failed to send for {} — will retry next cycle: {}",
+                    platform, category, e.getMessage());
+        }
+    }
+}

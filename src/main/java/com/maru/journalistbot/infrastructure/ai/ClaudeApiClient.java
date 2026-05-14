@@ -99,4 +99,22 @@ public class ClaudeApiClient {
 
     /**
      * Anthropic Messages API request body.
-     * Field names must match the API 
+     * Field names must match the API exactly (snake_case).
+     */
+    record ClaudeRequest(
+            String model,
+            int max_tokens,
+            List<Map<String, String>> messages
+    ) {}
+
+    record ClaudeResponse(
+            String id,
+            String type,
+            String role,
+            List<ContentBlock> content,
+            String model,
+            String stop_reason
+    ) {}
+
+    record ContentBlock(String type, String text) {}
+}

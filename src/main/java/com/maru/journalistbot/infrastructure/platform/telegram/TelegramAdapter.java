@@ -144,4 +144,16 @@ public class TelegramAdapter implements NewsMessagePort {
         return telegramBot != null;
     }
 
-    /** Circuit B
+    /** Circuit Breaker fallback — log and skip; dedup not marked so retry next cycle */
+    private void fallbackSendNews(List<NewsArticle> articles, NewsCategory category,
+                                  String formattedMessage, Throwable ex) {
+        log.warn("[TELEGRAM] Circuit OPEN or send error for {} — skipping broadcast. Reason: {}",
+                category.getDisplayName(), ex.getMessage());
+    }
+
+    // ── Private utilities ────────────────────────────────────────────────────
+
+    private boolean isTokenValid() {
+        return token != null && !token.isBlank() && !token.startsWith("your-");
+    }
+}

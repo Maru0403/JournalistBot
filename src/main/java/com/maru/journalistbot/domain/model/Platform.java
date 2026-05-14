@@ -20,4 +20,6 @@ public enum Platform {
     DISCORD("Discord", "🎮"),
     TELEGRAM("Telegram", "✈️");
 
-    private final String
+    private final String displayName;
+    private final String emoji;
+}

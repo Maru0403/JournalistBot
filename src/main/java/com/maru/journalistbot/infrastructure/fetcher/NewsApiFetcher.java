@@ -101,4 +101,30 @@ public class NewsApiFetcher {
         return text.length() > maxLen ? text.substring(0, maxLen - 3) + "..." : text;
     }
 
-    private LocalDateTime parseDate(String d
+    private LocalDateTime parseDate(String dateStr) {
+        if (dateStr == null) return LocalDateTime.now();
+        try {
+            return LocalDateTime.parse(dateStr, ISO_FORMATTER);
+        } catch (Exception e) {
+            return LocalDateTime.now();
+        }
+    }
+
+    /** Circuit Breaker fallback — return empty list, broadcast continues without NewsAPI */
+    private List<NewsArticle> fallbackSearch(String keyword, int limit, NewsCategory category, Throwable ex) {
+        log.warn("[NEWSAPI] Circuit OPEN or error for keyword '{}' — returning empty. Reason: {}",
+                keyword, ex.getMessage());
+        return Collections.emptyList();
+    }
+
+    record NewsApiResponse(String status, int totalResults, List<NewsApiArticle> articles) {}
+
+    record NewsApiArticle(
+            Map<String, String> source,
+            String author,
+            String title,
+            String description,
+            String url,
+            String publishedAt
+    ) {}
+}

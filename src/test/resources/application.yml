@@ -50,4 +50,44 @@ bot:
       period-hours: 24
     reddit:
       permits: 55
-      
+      period-seconds: 60
+    hn:
+      permits: 100
+      period-seconds: 60
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      claude:
+        failureRateThreshold: 50
+        slidingWindowSize: 5
+        waitDurationInOpenState: 30s
+      gemini:
+        failureRateThreshold: 50
+        slidingWindowSize: 5
+        waitDurationInOpenState: 30s
+      newsApi:
+        failureRateThreshold: 50
+        slidingWindowSize: 5
+        waitDurationInOpenState: 30s
+      reddit:
+        failureRateThreshold: 50
+        slidingWindowSize: 5
+        waitDurationInOpenState: 30s
+      hn:
+        failureRateThreshold: 50
+        slidingWindowSize: 5
+        waitDurationInOpenState: 30s
+      discord:
+        failureRateThreshold: 50
+        slidingWindowSize: 5
+        waitDurationInOpenState: 30s
+      telegram:
+        failureRateThreshold: 50
+        slidingWindowSize: 5
+        waitDurationInOpenState: 30s
+
+logging:
+  level:
+    com.maru.journalistbot: DEBUG
+    net.dv8tion.jda: ERROR

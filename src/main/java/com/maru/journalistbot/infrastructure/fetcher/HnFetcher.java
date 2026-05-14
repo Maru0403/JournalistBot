@@ -181,4 +181,27 @@ public class HnFetcher {
                     DateTimeFormatter.ISO_LOCAL_DATE_TIME
             );
         } catch (Exception e) {
-         
+            return LocalDateTime.now();
+        }
+    }
+
+    // ── API Response Records ─────────────────────────────────────────────────────
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record HnSearchResponse(
+            List<HnHit> hits,
+            @JsonProperty("nbHits") Integer nbHits,
+            @JsonProperty("page") Integer page
+    ) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record HnHit(
+            @JsonProperty("objectID")  String objectId,
+            @JsonProperty("title")     String title,
+            @JsonProperty("url")       String url,
+            @JsonProperty("author")    String author,
+            @JsonProperty("points")    Integer points,
+            @JsonProperty("num_comments") Integer numComments,
+            @JsonProperty("created_at") String createdAt
+    ) {}
+}
