@@ -47,6 +47,26 @@ spring:
     virtual:
       enabled: true   # Java 21 Virtual Threads — great for I/O-heavy workloads
 
+  # ======================== QUARTZ SCHEDULER ========================
+  quartz:
+    job-store-type: jdbc          # persist jobs in PostgreSQL (QRTZ_* tables)
+    jdbc:
+      initialize-schema: always   # auto-create QRTZ_* tables on startup
+    properties:
+      org.quartz:
+        scheduler:
+          instanceName: JournalistBotScheduler
+          instanceId: AUTO          # unique per pod — important for clustering
+        jobStore:
+          class: org.springframework.scheduling.quartz.LocalDataSourceJobStore
+          driverDelegateClass: org.quartz.impl.jdbcjobstore.PostgreSQLDelegate
+          tablePrefix: QRTZ_
+          isClustered: true         # enable cluster mode — works with Redis lock
+          clusterCheckinInterval: 10000
+          useProperties: false
+        threadPool:
+          threadCount: 5            # 3 news jobs + 2 spare
+
 # ======================== BOT PLATFORM TOKENS ========================
 bot:
   discord:
@@ -57,13 +77,6 @@ bot:
     token: ${TELEGRAM_BOT_TOKEN:your-telegram-bot-token-here}
     # Bot username WITHOUT the @ prefix (from @BotFather → /mybots → Edit Bot → Edit Name)
     username: ${TELEGRAM_BOT_USERNAME:YourBotUsername}
-
-  # Zalo OA — disabled in Phase 3, planned for future phase
-  # zalo:
-  #   app-id: ${ZALO_APP_ID:your-zalo-app-id}
-  #   app-secret: ${ZALO_APP_SECRET:your-zalo-app-secret}
-  #   oa-token: ${ZALO_OA_ACCESS_TOKEN:your-zalo-oa-access-token}
-  #   base-url: https://openapi.zalo.me
 
   # ======================== EXTERNAL APIS ========================
   news-api:
@@ -100,26 +113,4 @@ bot:
     gamedev-news-interval-ms: ${GAMEDEV_NEWS_INTERVAL_MS:7200000} # 2 hours
     news-fetch-limit: 5
 
-  # ======================== DEDUPLICATION ========================
-  dedup:
-    redis-ttl-hours: 48
-    mongo-ttl-days: 7
-
-# ======================== ACTUATOR ========================
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health, info, metrics, scheduledtasks
-  endpoint:
-    health:
-      show-details: when-authorized
-
-# ======================== LOGGING ========================
-logging:
-  level:
-    com.maru.journalistbot: INFO
-    net.dv8tion.jda: WARN
-    org.springframework.retry: WARN
-  pattern:
-    console: "%d{HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  # ================

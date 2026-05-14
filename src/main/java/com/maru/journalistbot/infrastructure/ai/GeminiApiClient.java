@@ -1,6 +1,7 @@
 package com.maru.journalistbot.infrastructure.ai;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -44,60 +45,62 @@ public class GeminiApiClient {
     /**
      * Send a prompt to Gemini and return the text response.
      *
+     * @CircuitBreaker("gemini"): if this method fails repeatedly
+     *   → circuit opens → fallbackChat() returns null
+     *   → AISummarizerService falls back to plain text
+     *
      * @param prompt    the full prompt text
      * @param maxTokens max output tokens
-     * @return response text, or null if the call failed
+     * @return response text, or null if the call failed / circuit is open
      */
+    @CircuitBreaker(name = "gemini", fallbackMethod = "fallbackChat")
     public String chat(String prompt, int maxTokens) {
         if (!isConfigured()) {
             log.debug("[GEMINI] API key not configured — skipping AI call");
             return null;
         }
 
-        try {
-            // Gemini API URL: /v1beta/models/{model}:generateContent?key={apiKey}
-            String url = API_BASE + "/" + MODEL + ":generateContent";
+        String url = API_BASE + "/" + MODEL + ":generateContent";
 
-            GeminiRequest request = new GeminiRequest(
-                    List.of(new Content(List.of(new Part(prompt)))),
-                    new GenerationConfig(maxTokens, 0.7f)
-            );
+        GeminiRequest request = new GeminiRequest(
+                List.of(new Content(List.of(new Part(prompt)))),
+                new GenerationConfig(maxTokens, 0.7f)
+        );
 
-            GeminiResponse response = webClient.post()
-                    .uri(url + "?key=" + apiKey)
-                    .header("content-type", "application/json")
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(GeminiResponse.class)
-                    .block();
+        GeminiResponse response = webClient.post()
+                .uri(url + "?key=" + apiKey)
+                .header("content-type", "application/json")
+                .bodyValue(request)
+                .retrieve()
+                .bodyToMono(GeminiResponse.class)
+                .block();
 
-            if (response == null
-                    || response.candidates() == null
-                    || response.candidates().isEmpty()) {
-                log.warn("[GEMINI] Empty response received");
-                return null;
-            }
-
-            Candidate first = response.candidates().get(0);
-            if (first.content() == null
-                    || first.content().parts() == null
-                    || first.content().parts().isEmpty()) {
-                log.warn("[GEMINI] No content parts in response");
-                return null;
-            }
-
-            String text = first.content().parts().get(0).text();
-            log.debug("[GEMINI] Response OK — {} chars, finish_reason={}",
-                    text != null ? text.length() : 0, first.finishReason());
-            return text;
-
-        } catch (WebClientResponseException e) {
-            log.error("[GEMINI] HTTP {} error: {}", e.getStatusCode().value(), e.getMessage());
-            return null;
-        } catch (Exception e) {
-            log.error("[GEMINI] Unexpected error during API call: {}", e.getMessage());
+        if (response == null
+                || response.candidates() == null
+                || response.candidates().isEmpty()) {
+            log.warn("[GEMINI] Empty response received");
             return null;
         }
+
+        Candidate first = response.candidates().get(0);
+        if (first.content() == null
+                || first.content().parts() == null
+                || first.content().parts().isEmpty()) {
+            log.warn("[GEMINI] No content parts in response");
+            return null;
+        }
+
+        String text = first.content().parts().get(0).text();
+        log.debug("[GEMINI] Response OK — {} chars, finish_reason={}",
+                text != null ? text.length() : 0, first.finishReason());
+        return text;
+    }
+
+    /** Circuit Breaker fallback — returns null so AISummarizerService uses plain text. */
+    private String fallbackChat(String prompt, int maxTokens, Throwable ex) {
+        log.warn("[GEMINI] Circuit OPEN or error — returning null for fallback chain. Reason: {}",
+                ex.getMessage());
+        return null;
     }
 
     // ── Request / Response records ────────────────────────────────────────────
@@ -128,10 +131,4 @@ public class GeminiApiClient {
             Map<String, Object> usageMetadata
     ) {}
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record Candidate(
-            Content content,
-            String finishReason,
-            int index
-    ) {}
-}
+    @JsonIgnorePrope

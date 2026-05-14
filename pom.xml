@@ -16,13 +16,15 @@
     <artifactId>journalist-bot</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>JournalistBot</name>
-    <description>Multi-platform news bot: Discord, Telegram, Zalo</description>
+    <description>Multi-platform news bot: Discord, Telegram</description>
 
     <properties>
         <java.version>21</java.version>
         <rome.version>2.1.0</rome.version>
         <mapstruct.version>1.6.3</mapstruct.version>
         <lombok.version>1.18.38</lombok.version>
+        <redisson.version>3.27.2</redisson.version>
+        <resilience4j.version>2.2.0</resilience4j.version>
     </properties>
 
     <dependencies>
@@ -115,6 +117,39 @@
             <artifactId>spring-retry</artifactId>
         </dependency>
 
+        <!-- RESILIENCE: Circuit Breaker — Resilience4j for Spring Boot 3 -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-micrometer</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+
+        <!-- DISTRIBUTED LOCK + RATE LIMIT: Redisson -->
+        <!-- Replaces spring-boot-starter-data-redis for advanced Redis features -->
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson-spring-boot-starter</artifactId>
+            <version>${redisson.version}</version>
+            <exclusions>
+                <!-- Exclude to avoid conflict with spring-boot-starter-data-redis -->
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-data-redis</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- SCHEDULER: Quartz — job persistence + clustering support -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-quartz</artifactId>
+        </dependency>
+
         <!-- UTILITIES -->
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -164,39 +199,4 @@
                 <configuration>
                     <excludes>
                         <exclude>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                        </exclude>
-                    </excludes>
-                </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
-                <configuration>
-                    <release>${java.version}</release>
-                    <annotationProcessorPaths>
-                        <path>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                            <version>${lombok.version}</version>
-                        </path>
-                        <!-- Ensures Lombok runs BEFORE MapStruct on Java 21 -->
-                        <path>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok-mapstruct-binding</artifactId>
-                            <version>0.2.0</version>
-                        </path>
-                        <path>
-                            <groupId>org.mapstruct</groupId>
-                            <artifactId>mapstruct-processor</artifactId>
-                            <version>${mapstruct.version}</version>
-                        </path>
-                    </annotationProcessorPaths>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
-
-</project>
+                            <groupId

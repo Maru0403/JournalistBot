@@ -2,6 +2,7 @@ package com.maru.journalistbot.application.broadcast;
 
 import com.maru.journalistbot.application.ai.AISummarizerService;
 import com.maru.journalistbot.application.dedup.DeduplicationService;
+import com.maru.journalistbot.application.metrics.BotMetricsService;
 import com.maru.journalistbot.domain.model.NewsArticle;
 import com.maru.journalistbot.domain.model.NewsCategory;
 import com.maru.journalistbot.domain.port.NewsMessagePort;
@@ -18,6 +19,7 @@ import java.util.List;
  *   2. Summarize with AI
  *   3. Send via platform port
  *   4. Mark as sent (only on success)
+ *   5. Record Micrometer metrics
  *
  * SRP: only responsible for broadcast orchestration.
  * DIP: depends on NewsMessagePort interface, not concrete adapters.
@@ -30,6 +32,7 @@ public class BroadcastService {
     private final List<NewsMessagePort> adapters;
     private final DeduplicationService deduplicationService;
     private final AISummarizerService summarizerService;
+    private final BotMetricsService metricsService;
 
     public void broadcastToAll(List<NewsArticle> articles, NewsCategory category) {
         if (articles.isEmpty()) {
@@ -57,23 +60,23 @@ public class BroadcastService {
         }
 
         List<NewsArticle> unsent = deduplicationService.filterUnsent(articles, platform);
+        int skipped = articles.size() - unsent.size();
+
+        if (skipped > 0) {
+            metricsService.recordArticlesSkipped(platform, skipped);
+        }
+
         if (unsent.isEmpty()) {
             log.info("[BROADCAST] [{}] All {} articles already sent", platform, articles.size());
             return;
         }
 
         log.info("[BROADCAST] [{}] {} new articles (filtered {} duplicates)",
-                platform, unsent.size(), articles.size() - unsent.size());
+                platform, unsent.size(), skipped);
 
         try {
             String message = summarizerService.summarize(unsent, category.getDisplayName());
             adapter.sendNews(unsent, category, message);
             deduplicationService.markAllAsSent(unsent, platform);
-            log.info("[BROADCAST] [{}] Successfully sent {} articles for {}", platform, unsent.size(), category);
-        } catch (Exception e) {
-            // Do NOT mark as sent — will retry naturally next scheduler cycle
-            log.error("[BROADCAST] [{}] Failed to send for {} — will retry next cycle: {}",
-                    platform, category, e.getMessage());
-        }
-    }
-}
+            metricsService.recordArticlesSent(platform, category, unsent.size());
+            log.info

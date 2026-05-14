@@ -7,6 +7,7 @@ import com.maru.journalistbot.domain.model.NewsArticle;
 import com.maru.journalistbot.domain.model.NewsCategory;
 import com.maru.journalistbot.domain.model.Platform;
 import com.maru.journalistbot.domain.port.NewsMessagePort;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -91,8 +92,12 @@ public class TelegramAdapter implements NewsMessagePort {
     /**
      * Broadcast to all active Telegram subscriptions in DB.
      * Multi-group: each subscribed chatId receives the message.
+     *
+     * @CircuitBreaker("telegram"): if Telegram API fails repeatedly
+     *   → circuit opens → fallbackSendNews() called → log and skip
      */
     @Override
+    @CircuitBreaker(name = "telegram", fallbackMethod = "fallbackSendNews")
     public void sendNews(List<NewsArticle> articles, NewsCategory category, String formattedMessage) {
         if (!isConnected()) {
             log.warn("[TELEGRAM] Bot not connected — skipping broadcast for {}", category.getDisplayName());
@@ -139,9 +144,4 @@ public class TelegramAdapter implements NewsMessagePort {
         return telegramBot != null;
     }
 
-    // ── Private utilities ────────────────────────────────────────────────────
-
-    private boolean isTokenValid() {
-        return token != null && !token.isBlank() && !token.startsWith("your-");
-    }
-}
+    /** Circuit B

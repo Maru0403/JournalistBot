@@ -23,8 +23,6 @@ bot:
   telegram:
     token: ""
     username: ""
-  zalo:
-    oa-token: ""
   news-api:
     key: test-key
     base-url: https://newsapi.org/v2
@@ -46,8 +44,10 @@ bot:
   dedup:
     redis-ttl-hours: 1
     mongo-ttl-days: 1
-
-logging:
-  level:
-    com.maru.journalistbot: DEBUG
-    net.dv8tion.jda: ERROR
+  rate-limit:
+    news-api:
+      permits: 90
+      period-hours: 24
+    reddit:
+      permits: 55
+      

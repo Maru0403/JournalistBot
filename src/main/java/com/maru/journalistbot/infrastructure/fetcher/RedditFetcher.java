@@ -1,7 +1,9 @@
 package com.maru.journalistbot.infrastructure.fetcher;
 
+import com.maru.journalistbot.application.ratelimit.RateLimiterService;
 import com.maru.journalistbot.domain.model.NewsArticle;
 import com.maru.journalistbot.domain.model.NewsCategory;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.retry.annotation.Backoff;
@@ -29,16 +31,23 @@ import java.util.List;
 public class RedditFetcher {
 
     private final WebClient webClient;
+    private final RateLimiterService rateLimiterService;
 
     private static final String BASE_URL = "https://www.reddit.com";
     private static final String USER_AGENT = "journalist-bot/2.0 (by journalist_bot; news aggregator)";
 
+    @CircuitBreaker(name = "reddit", fallbackMethod = "fallbackFetch")
     @Retryable(
         retryFor = Exception.class,
         maxAttempts = 2,
         backoff = @Backoff(delay = 4000)
     )
     public List<NewsArticle> fetchTopPosts(String subreddit, int limit, NewsCategory category) {
+        // Rate limit check — 60 req/min (55 with buffer)
+        if (!rateLimiterService.tryAcquire("reddit")) {
+            log.warn("[REDDIT] Rate limit reached — skipping r/{}", subreddit);
+            return Collections.emptyList();
+        }
         log.debug("[REDDIT] Fetching r/{} top posts (limit={}, t=day)", subreddit, limit);
         try {
             RedditResponse response = webClient.get()
@@ -121,24 +130,5 @@ public class RedditFetcher {
                 .toLocalDateTime();
     }
 
-    // ── Reddit JSON response shape ───────────────────────────────────────────
-    record RedditResponse(RedditData data) {}
-
-    record RedditData(List<RedditChild> children, String after) {}
-
-    record RedditChild(RedditPost data) {}
-
-    record RedditPost(
-            String id,
-            String title,
-            String url,
-            String selftext,
-            String permalink,
-            String subreddit,
-            int score,
-            int num_comments,
-            double created_utc,
-            boolean is_self,
-            boolean stickied
-    ) {}
-}
+    /** Circuit Breaker fallback — return empty list, broadcast continues with other sources */
+    private List<NewsArticle> fallbackFetch(Str

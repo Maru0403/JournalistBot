@@ -8,17 +8,16 @@ import lombok.RequiredArgsConstructor;
  * This ensures domain ports (NewsMessagePort) can reference it
  * without violating the Dependency Inversion Principle (DIP).
  *
- * Infrastructure adapters (DiscordAdapter, TelegramAdapter, ZaloAdapter)
+ * Infrastructure adapters (DiscordAdapter, TelegramAdapter)
  * also import from here — they depend inward toward domain, which is correct.
+ *
+ * Phase 4: Zalo removed — no OA credentials available, deferred to future phase.
  */
 @Getter
 @RequiredArgsConstructor
 public enum Platform {
 
     DISCORD("Discord", "🎮"),
-    TELEGRAM("Telegram", "✈️"),
-    ZALO("Zalo", "💬");
+    TELEGRAM("Telegram", "✈️");
 
-    private final String displayName;
-    private final String emoji;
-}
+    private final String

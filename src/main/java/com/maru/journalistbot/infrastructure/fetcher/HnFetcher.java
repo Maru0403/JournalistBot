@@ -2,8 +2,10 @@ package com.maru.journalistbot.infrastructure.fetcher;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.maru.journalistbot.application.ratelimit.RateLimiterService;
 import com.maru.journalistbot.domain.model.NewsArticle;
 import com.maru.journalistbot.domain.model.NewsCategory;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.retry.annotation.Backoff;
@@ -37,6 +39,7 @@ public class HnFetcher {
     private static final String SOURCE_NAME      = "Hacker News";
 
     private final WebClient webClient;
+    private final RateLimiterService rateLimiterService;
 
     /**
      * Search HN top stories for a given query.
@@ -46,12 +49,18 @@ public class HnFetcher {
      * @param category news category for tagging
      * @return list of NewsArticle, empty on error
      */
+    @CircuitBreaker(name = "hn", fallbackMethod = "fallbackSearch")
     @Retryable(
         retryFor = Exception.class,
         maxAttempts = 3,
         backoff = @Backoff(delay = 2000, multiplier = 2.0)
     )
     public List<NewsArticle> searchTopStories(String query, int limit, NewsCategory category) {
+        // Rate limit check — HN Algolia: 10,000 req/hour (100/60s with buffer)
+        if (!rateLimiterService.tryAcquire("hn")) {
+            log.warn("[HN] Rate limit reached — skipping query='{}'", query);
+            return Collections.emptyList();
+        }
         log.debug("[HN] Searching top stories: query='{}', limit={}", query, limit);
         try {
             HnSearchResponse response = webClient.get()
@@ -125,6 +134,13 @@ public class HnFetcher {
         }
     }
 
+    /** Circuit Breaker fallback — return empty list, broadcast continues with other sources */
+    private List<NewsArticle> fallbackSearch(String query, int limit, NewsCategory category, Throwable ex) {
+        log.warn("[HN] Circuit OPEN or error for query='{}' — returning empty. Reason: {}",
+                query, ex.getMessage());
+        return Collections.emptyList();
+    }
+
     // ── Mapping ─────────────────────────────────────────────────────────────────
 
     private NewsArticle mapToArticle(HnHit hit, NewsCategory category) {
@@ -165,27 +181,4 @@ public class HnFetcher {
                     DateTimeFormatter.ISO_LOCAL_DATE_TIME
             );
         } catch (Exception e) {
-            return LocalDateTime.now();
-        }
-    }
-
-    // ── API Response Records ─────────────────────────────────────────────────────
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record HnSearchResponse(
-            List<HnHit> hits,
-            @JsonProperty("nbHits") Integer nbHits,
-            @JsonProperty("page") Integer page
-    ) {}
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record HnHit(
-            @JsonProperty("objectID")  String objectId,
-            @JsonProperty("title")     String title,
-            @JsonProperty("url")       String url,
-            @JsonProperty("author")    String author,
-            @JsonProperty("points")    Integer points,
-            @JsonProperty("num_comments") Integer numComments,
-            @JsonProperty("created_at") String createdAt
-    ) {}
-}
+         

@@ -5,6 +5,7 @@ import com.maru.journalistbot.domain.model.NewsArticle;
 import com.maru.journalistbot.domain.model.NewsCategory;
 import com.maru.journalistbot.domain.model.Platform;
 import com.maru.journalistbot.domain.port.NewsMessagePort;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.extern.slf4j.Slf4j;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
@@ -87,8 +88,13 @@ public class DiscordAdapter implements NewsMessagePort {
      *   - Static news-channel-id from config (if configured)
      *   - All active DB subscriptions registered via /start
      * Deduplicates channelIds to avoid double-posting.
+     *
+     * @CircuitBreaker("discord"): if JDA send fails repeatedly
+     *   → circuit opens → fallbackSendNews() called → log and skip
+     *   → next broadcast cycle will retry automatically
      */
     @Override
+    @CircuitBreaker(name = "discord", fallbackMethod = "fallbackSendNews")
     public void sendNews(List<NewsArticle> articles, NewsCategory category, String formattedMessage) {
         if (!isConnected()) {
             log.warn("[DISCORD] Not connected — skipping broadcast for {}", category.getDisplayName());
@@ -138,6 +144,13 @@ public class DiscordAdapter implements NewsMessagePort {
         return jda != null && jda.getStatus() == JDA.Status.CONNECTED;
     }
 
+    /** Circuit Breaker fallback — log and skip; dedup not marked so retry next cycle */
+    private void fallbackSendNews(List<NewsArticle> articles, NewsCategory category,
+                                  String formattedMessage, Throwable ex) {
+        log.warn("[DISCORD] Circuit OPEN or send error for {} — skipping broadcast. Reason: {}",
+                category.getDisplayName(), ex.getMessage());
+    }
+
     // ── Private utilities ────────────────────────────────────────────────────
 
     private boolean isTokenValid() {
@@ -163,28 +176,4 @@ public class DiscordAdapter implements NewsMessagePort {
         for (String sub : dbSubs) {
             if (!targets.contains(sub)) {
                 targets.add(sub);
-            }
-        }
-        return targets;
-    }
-
-    /**
-     * Split message into ≤2000 char chunks and send sequentially.
-     * Discord rejects messages over 2000 characters.
-     */
-    private void sendInChunks(MessageChannel channel, String message) {
-        if (message.length() <= 2000) {
-            channel.sendMessage(message).queue(
-                    ok  -> {},
-                    err -> log.error("[DISCORD] Failed to send message: {}", err.getMessage())
-            );
-            return;
-        }
-
-        int splitAt = message.lastIndexOf("\n\n", 2000);
-        if (splitAt <= 0) splitAt = 2000;
-
-        channel.sendMessage(message.substring(0, splitAt).trim()).queue();
-        sendInChunks(channel, message.substring(splitAt).trim());
-    }
-}
+      

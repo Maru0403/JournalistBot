@@ -1,7 +1,9 @@
 package com.maru.journalistbot.infrastructure.fetcher;
 
+import com.maru.journalistbot.application.ratelimit.RateLimiterService;
 import com.maru.journalistbot.domain.model.NewsArticle;
 import com.maru.journalistbot.domain.model.NewsCategory;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +24,7 @@ import java.util.Map;
 public class NewsApiFetcher {
 
     private final WebClient webClient;
+    private final RateLimiterService rateLimiterService;
 
     @Value("${bot.news-api.key}")
     private String apiKey;
@@ -37,6 +40,7 @@ public class NewsApiFetcher {
         return apiKey != null && !apiKey.isBlank() && !apiKey.startsWith("your-");
     }
 
+    @CircuitBreaker(name = "newsApi", fallbackMethod = "fallbackSearch")
     @Retryable(
         retryFor = Exception.class,
         maxAttempts = 2,
@@ -45,6 +49,11 @@ public class NewsApiFetcher {
     public List<NewsArticle> searchByKeyword(String keyword, int limit, NewsCategory category) {
         if (!isConfigured()) {
             log.debug("[NEWSAPI] Key not configured — skipping search for '{}'", keyword);
+            return Collections.emptyList();
+        }
+        // Rate limit check — free tier: 100 req/day (90 with buffer)
+        if (!rateLimiterService.tryAcquire("newsApi")) {
+            log.warn("[NEWSAPI] Daily quota reached — skipping keyword='{}'", keyword);
             return Collections.emptyList();
         }
         log.debug("NewsAPI search: keyword='{}', limit={}", keyword, limit);
@@ -92,23 +101,4 @@ public class NewsApiFetcher {
         return text.length() > maxLen ? text.substring(0, maxLen - 3) + "..." : text;
     }
 
-    private LocalDateTime parseDate(String dateStr) {
-        if (dateStr == null) return LocalDateTime.now();
-        try {
-            return LocalDateTime.parse(dateStr, ISO_FORMATTER);
-        } catch (Exception e) {
-            return LocalDateTime.now();
-        }
-    }
-
-    record NewsApiResponse(String status, int totalResults, List<NewsApiArticle> articles) {}
-
-    record NewsApiArticle(
-            Map<String, String> source,
-            String author,
-            String title,
-            String description,
-            String url,
-            String publishedAt
-    ) {}
-}
+    private LocalDateTime parseDate(String d
