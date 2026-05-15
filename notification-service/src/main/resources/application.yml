@@ -1,0 +1,129 @@
+server:
+  port: ${SERVER_PORT:8083}
+
+spring:
+  application:
+    name: notification-service
+
+  threads:
+    virtual:
+      enabled: true   # Java 21 Virtual Threads
+
+  # ─── PostgreSQL (UserSubscription + BotCommand) ─────────────────────────────
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/postgres}
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD:123789}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        default_schema: journalist_bot
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        hbm2ddl:
+          create_namespaces: true
+    show-sql: false
+
+  # ─── MongoDB (SentArticle dedup, TTL 7d) ────────────────────────────────────
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/journalist_bot}
+
+    # ─── Redis (DeduplicationService cache, TTL 48h) ──────────────────────────
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 4
+          min-idle: 1
+
+  # ─── Kafka ──────────────────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: notification-group
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+    producer:
+      acks: "1"
+      retries: 3
+
+  # ─── Cache (bot-commands → Redis) ───────────────────────────────────────────
+  cache:
+    type: redis
+    redis:
+      time-to-live: 300000     # 5 minutes
+
+# ─── Bot platform tokens ──────────────────────────────────────────────────────
+bot:
+  discord:
+    token: ${DISCORD_BOT_TOKEN:your-discord-bot-token-here}
+    news-channel-id: ${DISCORD_NEWS_CHANNEL_ID:}
+
+  telegram:
+    token: ${TELEGRAM_BOT_TOKEN:your-telegram-bot-token-here}
+    username: ${TELEGRAM_BOT_USERNAME:YourBotUsername}
+
+  dedup:
+    redis-ttl-hours: 48
+    mongo-ttl-days: 7
+
+  schedule:
+    news-fetch-limit: 5
+
+# ─── Internal service URLs (Docker network / local dev) ──────────────────────
+services:
+  fetcher-url: ${FETCHER_SERVICE_URL:http://fetcher-service:8081}
+  summarizer-url: ${SUMMARIZER_SERVICE_URL:http://summarizer-service:8082}
+
+# ─── Resilience4j ─────────────────────────────────────────────────────────────
+resilience4j:
+  circuitbreaker:
+    instances:
+      discord:
+        failureRateThreshold: 50
+        minimumNumberOfCalls: 3
+        slidingWindowSize: 6
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 2
+        registerHealthIndicator: true
+      telegram:
+        failureRateThreshold: 50
+        minimumNumberOfCalls: 3
+        slidingWindowSize: 6
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 2
+        registerHealthIndicator: true
+
+# ─── Actuator ─────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, circuitbreakers, prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  health:
+    circuitbreakers:
+      enabled: true
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.maru.journalistbot: INFO
+    net.dv8tion.jda: WARN
+    org.telegram: WARN
+    org.springframework.kafka: WARN
+  pattern:
+    console: "%d{HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

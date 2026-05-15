@@ -1,0 +1,148 @@
+server:
+  port: ${SERVER_PORT:8081}
+
+spring:
+  application:
+    name: fetcher-service
+
+  threads:
+    virtual:
+      enabled: true   # Java 21 Virtual Threads — I/O-heavy workload
+
+  # ── PostgreSQL (Quartz job persistence) ──────────────────────────────────
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/postgres}
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD:123789}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        default_schema: journalist_bot
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        hbm2ddl:
+          create_namespaces: true
+    show-sql: false
+
+  # ── Redis (Rate Limiter + Distributed Lock) ───────────────────────────────
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 5
+          max-idle: 3
+          min-idle: 1
+
+  # ── Quartz Scheduler ─────────────────────────────────────────────────────
+  quartz:
+    job-store-type: jdbc
+    jdbc:
+      initialize-schema: always
+    properties:
+      org.quartz:
+        scheduler:
+          instanceName: FetcherScheduler
+          instanceId: AUTO
+        jobStore:
+          class: org.springframework.scheduling.quartz.LocalDataSourceJobStore
+          driverDelegateClass: org.quartz.impl.jdbcjobstore.PostgreSQLDelegate
+          tablePrefix: QRTZ_
+          isClustered: true
+          clusterCheckinInterval: 10000
+          useProperties: false
+        threadPool:
+          threadCount: 5
+
+  # ── Kafka Producer ────────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      # Cấu hình cơ bản — chi tiết xem KafkaProducerConfig.java
+      acks: all
+      retries: 3
+    # KHÔNG fail startup nếu Kafka chưa sẵn sàng — publish sẽ fail lần đầu và retry
+    # Điều này cho phép fetcher-service chạy trước khi Kafka container up xong
+
+# ── External API keys ─────────────────────────────────────────────────────
+bot:
+  news-api:
+    key: ${NEWS_API_KEY:}
+    base-url: https://newsapi.org/v2
+
+  # ── Scheduling ──────────────────────────────────────────────────────────
+  schedule:
+    initial-delay-ms: ${INITIAL_DELAY_MS:30000}
+    ai-news-interval-ms: ${AI_NEWS_INTERVAL_MS:1800000}
+    prog-news-interval-ms: ${PROG_NEWS_INTERVAL_MS:3600000}
+    gamedev-news-interval-ms: ${GAMEDEV_NEWS_INTERVAL_MS:7200000}
+    news-fetch-limit: ${NEWS_FETCH_LIMIT:5}
+
+  # ── Rate Limiting ────────────────────────────────────────────────────────
+  rate-limit:
+    news-api:
+      permits: 90
+      period-hours: 24
+    reddit:
+      permits: 55
+      period-seconds: 60
+    hn:
+      permits: 100
+      period-seconds: 60
+
+# ── Resilience4j Circuit Breaker ─────────────────────────────────────────
+resilience4j:
+  circuitbreaker:
+    instances:
+      newsApi:
+        failureRateThreshold: 60
+        minimumNumberOfCalls: 5
+        slidingWindowSize: 10
+        waitDurationInOpenState: 120s
+        permittedNumberOfCallsInHalfOpenState: 2
+        registerHealthIndicator: true
+      reddit:
+        failureRateThreshold: 60
+        minimumNumberOfCalls: 5
+        slidingWindowSize: 10
+        waitDurationInOpenState: 120s
+        permittedNumberOfCallsInHalfOpenState: 2
+        registerHealthIndicator: true
+      hn:
+        failureRateThreshold: 60
+        minimumNumberOfCalls: 5
+        slidingWindowSize: 10
+        waitDurationInOpenState: 120s
+        permittedNumberOfCallsInHalfOpenState: 2
+        registerHealthIndicator: true
+
+# ── Actuator ─────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus, scheduledtasks
+  endpoint:
+    health:
+      show-details: always
+  health:
+    circuitbreakers:
+      enabled: true
+
+# ── Logging ──────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.maru.journalistbot.fetcher: INFO
+    org.springframework.retry: WARN
+    org.apache.kafka: WARN
+  pattern:
+    console: "%d{HH:mm:ss} [%thread] %-5level %logger{30} - %msg%n"

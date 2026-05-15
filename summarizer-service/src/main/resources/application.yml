@@ -1,0 +1,73 @@
+server:
+  port: ${SERVER_PORT:8082}
+
+spring:
+  application:
+    name: summarizer-service
+
+  threads:
+    virtual:
+      enabled: true
+
+  # ── Kafka ────────────────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: summarizer-group
+      auto-offset-reset: earliest
+      enable-auto-commit: false   # Manual ACK — xem KafkaConfig.java
+    producer:
+      acks: all
+      retries: 3
+
+# ── AI API Keys (chỉ service này biết — principle of least privilege) ────
+bot:
+  ai:
+    primary-provider: ${AI_PRIMARY_PROVIDER:claude}
+    anthropic:
+      api-key: ${ANTHROPIC_API_KEY:}
+      # Model: claude-haiku-4-5-20251001 — fast & cheap
+    gemini:
+      api-key: ${GEMINI_API_KEY:}
+      # Model: gemini-1.5-flash — free tier: 1,500 req/day
+
+# ── Resilience4j Circuit Breaker ─────────────────────────────────────────
+resilience4j:
+  circuitbreaker:
+    instances:
+      claude:
+        failureRateThreshold: 50
+        minimumNumberOfCalls: 5
+        slidingWindowSize: 10
+        waitDurationInOpenState: 60s
+        permittedNumberOfCallsInHalfOpenState: 3
+        registerHealthIndicator: true
+      gemini:
+        failureRateThreshold: 50
+        minimumNumberOfCalls: 5
+        slidingWindowSize: 10
+        waitDurationInOpenState: 60s
+        permittedNumberOfCallsInHalfOpenState: 3
+        registerHealthIndicator: true
+
+# ── Actuator ─────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus
+  endpoint:
+    health:
+      show-details: always
+  health:
+    circuitbreakers:
+      enabled: true
+
+# ── Logging ──────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.maru.journalistbot.summarizer: INFO
+    org.apache.kafka: WARN
+    org.springframework.retry: WARN
+  pattern:
+    console: "%d{HH:mm:ss} [%thread] %-5level %logger{30} - %msg%n"

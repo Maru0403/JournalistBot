@@ -1,0 +1,127 @@
+name: gateway-service — CI/CD
+
+on:
+  push:
+    branches: [ "**" ]
+    paths:
+      - 'gateway-service/**'
+      - 'pom.xml'
+      - '.github/workflows/ci-cd-gateway.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'gateway-service/**'
+      - 'pom.xml'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/journalist-gateway
+  SERVICE: gateway-service
+
+jobs:
+
+  # ── CI: Build + Test ────────────────────────────────────────────────────────
+  ci:
+    runs-on: ubuntu-latest
+    name: CI — Build & Test gateway-service
+
+    services:
+      # gateway-service only needs Redis (for IP rate limiting)
+      redis:
+        image: redis:7.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      # gateway-service does not depend on common at runtime
+      # but -am ensures Maven reactor resolves correctly
+      - name: Build gateway-service
+        run: mvn compile -pl gateway-service -am -B -q
+
+      - name: Test gateway-service
+        run: mvn test -pl gateway-service -am -B
+        env:
+          SPRING_PROFILES_ACTIVE: test
+          SPRING_DATA_REDIS_HOST: localhost
+          # Downstream services are mocked in tests
+          FETCHER_SERVICE_URL: "http://localhost:8081"
+          SUMMARIZER_SERVICE_URL: "http://localhost:8082"
+          NOTIFICATION_SERVICE_URL: "http://localhost:8083"
+          TELEGRAM_WEBHOOK_SECRET: "test-secret"
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gateway-test-reports
+          path: gateway-service/target/surefire-reports/
+          retention-days: 7
+
+  # ── CD: Docker Build & Push ────────────────────────────────────────────────
+  cd:
+    runs-on: ubuntu-latest
+    name: CD — Docker Build & Push gateway-service
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          dockerfile: gateway-service/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

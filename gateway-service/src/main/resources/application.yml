@@ -1,0 +1,115 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: gateway-service
+
+  # ─── Redis (IP rate limiting) ─────────────────────────────────────────────
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+
+  # ─── Spring Cloud Gateway routing ────────────────────────────────────────
+  cloud:
+    gateway:
+      # Global CORS (allow all for dev; tighten for production)
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins: "*"
+            allowedMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+            allowedHeaders: "*"
+
+      routes:
+
+        # ── Fetcher Service ────────────────────────────────────────────────
+        # Handles: on-demand news fetch for /news command, health
+        - id: fetcher-service
+          uri: ${FETCHER_SERVICE_URL:http://fetcher-service:8081}
+          predicates:
+            - Path=/fetcher/**
+          filters:
+            - StripPrefix=1    # /fetcher/api/news → /api/news
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                key-resolver: "#{@ipKeyResolver}"
+
+        # ── Summarizer Service ─────────────────────────────────────────────
+        # Handles: on-demand summarization for /news command, health
+        - id: summarizer-service
+          uri: ${SUMMARIZER_SERVICE_URL:http://summarizer-service:8082}
+          predicates:
+            - Path=/summarizer/**
+          filters:
+            - StripPrefix=1    # /summarizer/api/summarize → /api/summarize
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 5
+                redis-rate-limiter.burstCapacity: 10
+                key-resolver: "#{@ipKeyResolver}"
+
+        # ── Notification Service — Telegram Webhook ───────────────────────
+        # Telegram sends POST to /webhook/telegram with secret header
+        # This route verifies the token before forwarding
+        - id: notification-telegram-webhook
+          uri: ${NOTIFICATION_SERVICE_URL:http://notification-service:8083}
+          predicates:
+            - Path=/webhook/telegram/**
+          filters:
+            - TelegramWebhookFilter    # Verifies X-Telegram-Bot-Api-Secret-Token
+            - RewritePath=/webhook/telegram/(?<segment>.*), /api/telegram/${segment}
+
+        # ── Notification Service — General ────────────────────────────────
+        # Handles: subscription API, health, admin endpoints
+        - id: notification-service
+          uri: ${NOTIFICATION_SERVICE_URL:http://notification-service:8083}
+          predicates:
+            - Path=/notification/**
+          filters:
+            - StripPrefix=1    # /notification/api/... → /api/...
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+                key-resolver: "#{@ipKeyResolver}"
+
+        # ── Actuator Health (aggregated from gateway itself) ──────────────
+        - id: gateway-actuator
+          uri: http://localhost:${SERVER_PORT:8080}
+          predicates:
+            - Path=/actuator/**
+
+# ─── Bot config (only webhook secret needed in gateway) ──────────────────────
+bot:
+  telegram:
+    webhook-secret: ${TELEGRAM_WEBHOOK_SECRET:}
+
+# ─── Internal service URLs ────────────────────────────────────────────────────
+# These are used in routes above via environment variables
+# Docker network values: http://fetcher-service:8081, etc.
+
+# ─── Actuator ─────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, gateway, prometheus
+  endpoint:
+    health:
+      show-details: always
+    gateway:
+      enabled: true   # Expose /actuator/gateway/routes for debugging
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.maru.journalistbot: INFO
+    org.springframework.cloud.gateway: INFO
+    reactor.netty: WARN
+  pattern:
+    console: "%d{HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

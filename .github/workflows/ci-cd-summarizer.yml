@@ -1,0 +1,114 @@
+name: summarizer-service — CI/CD
+
+on:
+  push:
+    branches: [ "**" ]
+    paths:
+      - 'summarizer-service/**'
+      - 'common/**'
+      - 'pom.xml'
+      - '.github/workflows/ci-cd-summarizer.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'summarizer-service/**'
+      - 'common/**'
+      - 'pom.xml'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/journalist-summarizer
+  SERVICE: summarizer-service
+
+jobs:
+
+  # ── CI: Build + Test ────────────────────────────────────────────────────────
+  ci:
+    runs-on: ubuntu-latest
+    name: CI — Build & Test summarizer-service
+
+    # summarizer-service has NO DB, NO Redis — only Kafka (mocked in tests)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build summarizer-service
+        run: mvn compile -pl summarizer-service -am -B -q
+
+      - name: Test summarizer-service
+        run: mvn test -pl summarizer-service -am -B
+        env:
+          SPRING_PROFILES_ACTIVE: test
+          # AI keys — empty in CI (tests should mock or skip AI calls)
+          ANTHROPIC_API_KEY: ""
+          GEMINI_API_KEY: ""
+          KAFKA_BOOTSTRAP_SERVERS: "localhost:9092"   # tests use EmbeddedKafka or mocks
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: summarizer-test-reports
+          path: summarizer-service/target/surefire-reports/
+          retention-days: 7
+
+  # ── CD: Docker Build & Push ────────────────────────────────────────────────
+  cd:
+    runs-on: ubuntu-latest
+    name: CD — Docker Build & Push summarizer-service
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          dockerfile: summarizer-service/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

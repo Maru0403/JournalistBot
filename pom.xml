@@ -5,6 +5,22 @@
          https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <!--
+        Parent POM — Phase 5 Multi-module Maven
+        ────────────────────────────────────────
+        Vai trò:
+          - Khai báo tất cả version ở một chỗ (Single Source of Truth)
+          - Child module kế thừa parent này, không cần khai báo version lại
+          - Không có src/ ở root — đây chỉ là parent coordinator
+
+        Modules:
+          common               → shared events, enums, Kafka topic constants
+          fetcher-service      → RSS/HN/Reddit/NewsAPI fetcher + Quartz + Kafka producer
+          summarizer-service   → Claude/Gemini AI summarizer + Kafka consumer/producer
+          notification-service → Discord/Telegram broadcast + Kafka consumer
+          gateway-service      → Spring Cloud Gateway + routing + security filter
+    -->
+
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
@@ -13,11 +29,22 @@
     </parent>
 
     <groupId>com.maru</groupId>
-    <artifactId>journalist-bot</artifactId>
+    <artifactId>journalist-bot-parent</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>JournalistBot</name>
-    <description>Multi-platform news bot: Discord, Telegram</description>
+    <packaging>pom</packaging>
+    <name>JournalistBot Parent</name>
+    <description>Multi-platform news bot — Multi-module Maven parent</description>
 
+    <!-- ── Child modules ─────────────────────────────────────────────────── -->
+    <modules>
+        <module>common</module>
+        <module>fetcher-service</module>
+        <module>summarizer-service</module>
+        <module>notification-service</module>
+        <module>gateway-service</module>
+    </modules>
+
+    <!-- ── Shared properties ─────────────────────────────────────────────── -->
     <properties>
         <java.version>21</java.version>
         <rome.version>2.1.0</rome.version>
@@ -25,235 +52,150 @@
         <lombok.version>1.18.38</lombok.version>
         <redisson.version>3.27.2</redisson.version>
         <resilience4j.version>2.2.0</resilience4j.version>
+        <spring-cloud.version>2023.0.3</spring-cloud.version>
     </properties>
 
-    <dependencies>
+    <!-- ── Dependency version management — child modules inherit versions ── -->
+    <dependencyManagement>
+        <dependencies>
 
-        <!-- SPRING BOOT CORE -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-aop</artifactId>
-        </dependency>
+            <!-- Internal modules — version auto-synced with parent -->
+            <dependency>
+                <groupId>com.maru</groupId>
+                <artifactId>common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
-        <!-- DATABASE: MongoDB -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-mongodb</artifactId>
-        </dependency>
+            <!-- Spring Cloud BOM (for Gateway) -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
 
-        <!-- DATABASE: PostgreSQL -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
-        </dependency>
+            <!-- Rome RSS Parser -->
+            <dependency>
+                <groupId>com.rometools</groupId>
+                <artifactId>rome</artifactId>
+                <version>${rome.version}</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>com.fasterxml.jackson.module</groupId>
+                        <artifactId>jackson-module-jaxb-annotations</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
 
-        <!-- DATABASE: Redis -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-redis</artifactId>
-        </dependency>
+            <!-- Discord JDA 5 -->
+            <dependency>
+                <groupId>net.dv8tion</groupId>
+                <artifactId>JDA</artifactId>
+                <version>5.2.1</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>club.minnced</groupId>
+                        <artifactId>opus-java</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>com.fasterxml.jackson.module</groupId>
+                        <artifactId>jackson-module-jaxb-annotations</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
 
-        <!-- NEWS: RSS/Atom parser -->
-        <dependency>
-            <groupId>com.rometools</groupId>
-            <artifactId>rome</artifactId>
-            <version>${rome.version}</version>
-            <exclusions>
-                <!-- Prevent javax.xml.bind.* from classpath (removed in Java 11) -->
-                <exclusion>
-                    <groupId>com.fasterxml.jackson.module</groupId>
-                    <artifactId>jackson-module-jaxb-annotations</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
+            <!-- Telegram Bot -->
+            <dependency>
+                <groupId>org.telegram</groupId>
+                <artifactId>telegrambots</artifactId>
+                <version>6.9.7.1</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>com.fasterxml.jackson.module</groupId>
+                        <artifactId>jackson-module-jaxb-annotations</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
 
-        <!-- DISCORD: JDA 5 (Java Discord API) — Phase 2 -->
-        <!-- Check latest: https://mvnrepository.com/artifact/net.dv8tion/JDA -->
-        <dependency>
-            <groupId>net.dv8tion</groupId>
-            <artifactId>JDA</artifactId>
-            <version>5.2.1</version>
-            <exclusions>
-                <!-- Exclude voice/audio support (not needed for text-only bot) -->
-                <exclusion>
-                    <groupId>club.minnced</groupId>
-                    <artifactId>opus-java</artifactId>
-                </exclusion>
-                <!-- Prevent javax.xml.bind.* from classpath (removed in Java 11) -->
-                <exclusion>
-                    <groupId>com.fasterxml.jackson.module</groupId>
-                    <artifactId>jackson-module-jaxb-annotations</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
+            <!-- Redisson (Distributed Lock + Rate Limiter) -->
+            <dependency>
+                <groupId>org.redisson</groupId>
+                <artifactId>redisson-spring-boot-starter</artifactId>
+                <version>${redisson.version}</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-starter-data-redis</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
 
-        <!-- TELEGRAM: TelegramBots 6.9.7 — Java Telegram Bot API -->
-        <!-- Docs: https://github.com/rubenlagus/TelegramBots -->
-        <dependency>
-            <groupId>org.telegram</groupId>
-            <artifactId>telegrambots</artifactId>
-            <version>6.9.7.1</version>
-            <scope>compile</scope>
-            <exclusions>
-                <!-- jackson-module-jaxb-annotations uses javax.xml.bind.* (Java EE namespace),
-                     which was REMOVED from the JDK in Java 11. We don't use JAXB annotations
-                     in our Jackson models — exclude to prevent Hibernate's findAndRegisterModules()
-                     from crashing at startup. -->
-                <exclusion>
-                    <groupId>com.fasterxml.jackson.module</groupId>
-                    <artifactId>jackson-module-jaxb-annotations</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
+            <!-- Resilience4j Circuit Breaker -->
+            <dependency>
+                <groupId>io.github.resilience4j</groupId>
+                <artifactId>resilience4j-spring-boot3</artifactId>
+                <version>${resilience4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.resilience4j</groupId>
+                <artifactId>resilience4j-micrometer</artifactId>
+                <version>${resilience4j.version}</version>
+            </dependency>
 
-        <!-- CACHE: Spring Cache abstraction (@Cacheable, @CacheEvict) -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-cache</artifactId>
-        </dependency>
+            <!-- MapStruct -->
+            <dependency>
+                <groupId>org.mapstruct</groupId>
+                <artifactId>mapstruct</artifactId>
+                <version>${mapstruct.version}</version>
+            </dependency>
 
-        <!-- RESILIENCE: Retry with backoff -->
-        <dependency>
-            <groupId>org.springframework.retry</groupId>
-            <artifactId>spring-retry</artifactId>
-        </dependency>
+        </dependencies>
+    </dependencyManagement>
 
-        <!-- RESILIENCE: Circuit Breaker — Resilience4j for Spring Boot 3 -->
-        <dependency>
-            <groupId>io.github.resilience4j</groupId>
-            <artifactId>resilience4j-spring-boot3</artifactId>
-            <version>${resilience4j.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>io.github.resilience4j</groupId>
-            <artifactId>resilience4j-micrometer</artifactId>
-            <version>${resilience4j.version}</version>
-        </dependency>
-
-        <!-- DISTRIBUTED LOCK + RATE LIMIT: Redisson -->
-        <!-- Replaces spring-boot-starter-data-redis for advanced Redis features -->
-        <dependency>
-            <groupId>org.redisson</groupId>
-            <artifactId>redisson-spring-boot-starter</artifactId>
-            <version>${redisson.version}</version>
-            <exclusions>
-                <!-- Exclude to avoid conflict with spring-boot-starter-data-redis -->
-                <exclusion>
-                    <groupId>org.springframework.boot</groupId>
-                    <artifactId>spring-boot-starter-data-redis</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <!-- SCHEDULER: Quartz — job persistence + clustering support -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-quartz</artifactId>
-        </dependency>
-
-        <!-- UTILITIES -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
-        </dependency>
-        <dependency>
-            <groupId>org.mapstruct</groupId>
-            <artifactId>mapstruct</artifactId>
-            <version>${mapstruct.version}</version>
-        </dependency>
-
-        <!-- TESTING -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.projectreactor</groupId>
-            <artifactId>reactor-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>mongodb</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>postgresql</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-    </dependencies>
-
+    <!-- ── Plugin management — shared build config cho tất cả child modules ── -->
     <build>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-                <configuration>
-                    <excludes>
-                        <exclude>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                        </exclude>
-                    </excludes>
-                </configuration>
-            </plugin>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
-                <configuration>
-                    <release>${java.version}</release>
-                    <annotationProcessorPaths>
-                        <path>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                            <version>${lombok.version}</version>
-                        </path>
-                        <!-- Ensures Lombok runs BEFORE MapStruct on Java 21 -->
-                        <path>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok-mapstruct-binding</artifactId>
-                            <version>0.2.0</version>
-                        </path>
-                        <path>
-                            <groupId>org.mapstruct</groupId>
-                            <artifactId>mapstruct-processor</artifactId>
-                            <version>${mapstruct.version}</version>
-                        </path>
-                    </annotationProcessorPaths>
-                </configuration>
-            </plugin>
-        </plugins>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <configuration>
+                        <excludes>
+                            <exclude>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                            </exclude>
+                        </excludes>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.13.0</version>
+                    <configuration>
+                        <release>${java.version}</release>
+                        <annotationProcessorPaths>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                                <version>${lombok.version}</version>
+                            </path>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok-mapstruct-binding</artifactId>
+                                <version>0.2.0</version>
+                            </path>
+                            <path>
+                                <groupId>org.mapstruct</groupId>
+                                <artifactId>mapstruct-processor</artifactId>
+                                <version>${mapstruct.version}</version>
+                            </path>
+                        </annotationProcessorPaths>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
     </build>
 
 </project>
