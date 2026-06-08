@@ -78,6 +78,19 @@ spring:
                 redis-rate-limiter.burstCapacity: 40
                 key-resolver: "#{@ipKeyResolver}"
 
+        # ── Scheduler Service (Phase 6 — on-demand trigger) ──────────────
+        - id: scheduler-service
+          uri: ${SCHEDULER_SERVICE_URL:http://scheduler-service:8084}
+          predicates:
+            - Path=/scheduler/**
+          filters:
+            - StripPrefix=1    # /scheduler/api/trigger/AI → /api/trigger/AI
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 5
+                redis-rate-limiter.burstCapacity: 10
+                key-resolver: "#{@ipKeyResolver}"
+
         # ── Actuator Health (aggregated from gateway itself) ──────────────
         - id: gateway-actuator
           uri: http://localhost:${SERVER_PORT:8080}
@@ -93,8 +106,14 @@ bot:
 # These are used in routes above via environment variables
 # Docker network values: http://fetcher-service:8081, etc.
 
-# ─── Actuator ─────────────────────────────────────────────────────────────────
+# ─── Actuator + Tracing ───────────────────────────────────────────────────────
 management:
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_BASE_URL:http://localhost:9411}/api/v2/spans
+  tracing:
+    sampling:
+      probability: 1.0
   endpoints:
     web:
       exposure:
@@ -112,4 +131,4 @@ logging:
     org.springframework.cloud.gateway: INFO
     reactor.netty: WARN
   pattern:
-    console: "%d{HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    console: "%d{HH:mm:ss} [%thread] %-5level [traceId=%X{traceId}] %logger{36} - %msg%n"

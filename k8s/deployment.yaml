@@ -1,39 +1,310 @@
+# ── Per-Service Deployments (Phase 6) ─────────────────────────────────────────
+# Mỗi service có deployment riêng, resource riêng, probe riêng.
+# Tất cả pull image từ GHCR (ghcr.io/maru0403/journalistbot-<service>:latest)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SCHEDULER SERVICE (Phase 6 — mới)
+# ─────────────────────────────────────────────────────────────────────────────
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: journalist-bot
+  name: scheduler-service
   namespace: journalist-bot
   labels:
-    app: journalist-bot
-    version: latest
+    app: scheduler-service
 spec:
-  replicas: 2  # 2 instances for HA — bot is stateless (state lives in Redis/PG/Mongo)
+  replicas: 1   # HPA sẽ scale lên 2 nếu cần; Quartz isClustered=true xử lý HA
   selector:
     matchLabels:
-      app: journalist-bot
+      app: scheduler-service
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
-      maxUnavailable: 0  # Zero downtime during deploy
+      maxUnavailable: 0
   template:
     metadata:
       labels:
-        app: journalist-bot
-        version: latest
+        app: scheduler-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8084"
     spec:
-      # ── Security context ──────────────────────────────────────────────────
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
-
-      # ── Wait for dependencies before starting ─────────────────────────────
       initContainers:
-        - name: wait-for-postgres
+        - name: wait-for-postgres-scheduler
           image: busybox:1.35
           command: ['sh', '-c',
-            'until nc -z journalist-postgres 5432; do echo "Waiting for PostgreSQL..."; sleep 3; done']
+            'until nc -z postgres-scheduler 5432; do echo "Waiting for postgres-scheduler..."; sleep 3; done']
+        - name: wait-for-kafka
+          image: busybox:1.35
+          command: ['sh', '-c',
+            'until nc -z kafka 29092; do echo "Waiting for Kafka..."; sleep 3; done']
+      containers:
+        - name: scheduler-service
+          image: ghcr.io/maru0403/journalistbot-scheduler:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8084
+          envFrom:
+            - configMapRef:
+                name: scheduler-service-config
+          env:
+            - name: POSTGRES_SCHEDULER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: POSTGRES_SCHEDULER_PASSWORD
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:+UseVirtualThreads -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "384Mi"
+            limits:
+              cpu: "500m"
+              memory: "768Mi"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8084
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8084
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# FETCHER SERVICE (Phase 6 — không còn PostgreSQL)
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fetcher-service
+  namespace: journalist-bot
+  labels:
+    app: fetcher-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fetcher-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: fetcher-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8081"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.35
+          command: ['sh', '-c',
+            'until nc -z journalist-redis 6379; do echo "Waiting for Redis..."; sleep 3; done']
+        - name: wait-for-kafka
+          image: busybox:1.35
+          command: ['sh', '-c',
+            'until nc -z kafka 29092; do echo "Waiting for Kafka..."; sleep 3; done']
+      containers:
+        - name: fetcher-service
+          image: ghcr.io/maru0403/journalistbot-fetcher:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: fetcher-service-config
+          env:
+            - name: NEWS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: NEWS_API_KEY
+                  optional: true
+            - name: REDDIT_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: REDDIT_CLIENT_ID
+                  optional: true
+            - name: REDDIT_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: REDDIT_CLIENT_SECRET
+                  optional: true
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:+UseVirtualThreads -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 45
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# SUMMARIZER SERVICE
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: summarizer-service
+  namespace: journalist-bot
+  labels:
+    app: summarizer-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: summarizer-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: summarizer-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8082"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: wait-for-kafka
+          image: busybox:1.35
+          command: ['sh', '-c',
+            'until nc -z kafka 29092; do echo "Waiting for Kafka..."; sleep 3; done']
+      containers:
+        - name: summarizer-service
+          image: ghcr.io/maru0403/journalistbot-summarizer:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: summarizer-service-config
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: GEMINI_API_KEY
+                  optional: true
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:+UseVirtualThreads -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8082
+            initialDelaySeconds: 45
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8082
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# NOTIFICATION SERVICE
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+  namespace: journalist-bot
+  labels:
+    app: notification-service
+spec:
+  replicas: 2   # HA — 2 pod minimum; HPA scale lên 5
+  selector:
+    matchLabels:
+      app: notification-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: notification-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8083"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: wait-for-postgres-notification
+          image: busybox:1.35
+          command: ['sh', '-c',
+            'until nc -z postgres-notification 5432; do echo "Waiting for postgres-notification..."; sleep 3; done']
         - name: wait-for-mongodb
           image: busybox:1.35
           command: ['sh', '-c',
@@ -42,23 +313,15 @@ spec:
           image: busybox:1.35
           command: ['sh', '-c',
             'until nc -z journalist-redis 6379; do echo "Waiting for Redis..."; sleep 3; done']
-
       containers:
-        - name: journalist-bot
-          # Image from GitHub Container Registry (pushed by CD pipeline)
-          image: ghcr.io/maru0403/journalistbot:latest
+        - name: notification-service
+          image: ghcr.io/maru0403/journalistbot-notification:latest
           imagePullPolicy: Always
           ports:
-            - name: http
-              containerPort: 8080
-              protocol: TCP
-
-          # ── Environment from ConfigMap ──────────────────────────────────
+            - containerPort: 8083
           envFrom:
             - configMapRef:
-                name: journalist-bot-config
-
-          # ── Secrets as environment variables ───────────────────────────
+                name: notification-service-config
           env:
             - name: POSTGRES_PASSWORD
               valueFrom:
@@ -86,53 +349,108 @@ spec:
                 secretKeyRef:
                   name: journalist-bot-secrets
                   key: TELEGRAM_BOT_USERNAME
-            - name: ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: journalist-bot-secrets
-                  key: ANTHROPIC_API_KEY
-                  optional: true
-            - name: GEMINI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: journalist-bot-secrets
-                  key: GEMINI_API_KEY
-                  optional: true
-            - name: NEWS_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: journalist-bot-secrets
-                  key: NEWS_API_KEY
-                  optional: true
-            # ── JVM Virtual Threads + tuning ──────────────────────────────
             - name: JAVA_TOOL_OPTIONS
               value: "-XX:+UseVirtualThreads -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
-
-          # ── Resource limits ────────────────────────────────────────────
           resources:
             requests:
-              cpu: "250m"
-              memory: "512Mi"
+              cpu: "300m"
+              memory: "768Mi"
+            limits:
+              cpu: "1500m"
+              memory: "1.5Gi"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8083
+            initialDelaySeconds: 90   # Discord/Telegram init cần thời gian
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8083
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 5
+            timeoutSeconds: 10
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# GATEWAY SERVICE
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-service
+  namespace: journalist-bot
+  labels:
+    app: gateway-service
+spec:
+  replicas: 2   # Always 2+ for HA at entry point
+  selector:
+    matchLabels:
+      app: gateway-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: gateway-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8080"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: wait-for-redis
+          image: busybox:1.35
+          command: ['sh', '-c',
+            'until nc -z journalist-redis 6379; do echo "Waiting for Redis..."; sleep 3; done']
+      containers:
+        - name: gateway-service
+          image: ghcr.io/maru0403/journalistbot-gateway:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: gateway-service-config
+          env:
+            - name: TELEGRAM_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: TELEGRAM_WEBHOOK_SECRET
+                  optional: true
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:+UseVirtualThreads -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "384Mi"
             limits:
               cpu: "1000m"
-              memory: "1Gi"
-
-          # ── Health checks (via Spring Actuator) ────────────────────────
+              memory: "768Mi"
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
               port: 8080
-            initialDelaySeconds: 60
+            initialDelaySeconds: 30
             periodSeconds: 30
             failureThreshold: 3
             timeoutSeconds: 5
-
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
               port: 8080
-            initialDelaySeconds: 30
+            initialDelaySeconds: 15
             periodSeconds: 10
             failureThreshold: 3
             timeoutSeconds: 5
-

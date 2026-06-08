@@ -1,30 +1,105 @@
+# ── Per-Service ConfigMaps (Phase 6) ──────────────────────────────────────────
+# Mỗi service có ConfigMap riêng — chỉ expose env vars mà service đó cần
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SCHEDULER SERVICE
+# ─────────────────────────────────────────────────────────────────────────────
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: journalist-bot-config
+  name: scheduler-service-config
   namespace: journalist-bot
   labels:
-    app: journalist-bot
+    app: scheduler-service
 data:
-  # ── Server ──────────────────────────────────────────────────────
-  SERVER_PORT: "8080"
-
-  # ── Database endpoints ──────────────────────────────────────────
-  MONGODB_URI: "mongodb://journalist-mongodb:27017/journalist_bot"
-  POSTGRES_URL: "jdbc:postgresql://journalist-postgres:5432/postgres"
-  POSTGRES_USER: "postgres"
-  REDIS_HOST: "journalist-redis"
-  REDIS_PORT: "6379"
-
-  # ── Scheduling ──────────────────────────────────────────────────
+  SERVER_PORT: "8084"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-0.kafka.journalist-bot.svc.cluster.local:29092"
+  POSTGRES_SCHEDULER_URL: "jdbc:postgresql://postgres-scheduler:5432/postgres"
+  POSTGRES_SCHEDULER_USER: "postgres"
+  ZIPKIN_BASE_URL: "http://zipkin:9411"
   INITIAL_DELAY_MS: "30000"
   AI_NEWS_INTERVAL_MS: "1800000"
   PROG_NEWS_INTERVAL_MS: "3600000"
   GAMEDEV_NEWS_INTERVAL_MS: "7200000"
-
-  # ── AI Provider ─────────────────────────────────────────────────
-  # Set to "gemini" to use Gemini as primary (Claude becomes fallback)
+  NEWS_FETCH_LIMIT: "5"
+  SPRING_PROFILES_ACTIVE: "prod"
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# FETCHER SERVICE
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fetcher-service-config
+  namespace: journalist-bot
+  labels:
+    app: fetcher-service
+data:
+  SERVER_PORT: "8081"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-0.kafka.journalist-bot.svc.cluster.local:29092"
+  REDIS_HOST: "journalist-redis"
+  REDIS_PORT: "6379"
+  ZIPKIN_BASE_URL: "http://zipkin:9411"
+  SPRING_PROFILES_ACTIVE: "prod"
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# SUMMARIZER SERVICE
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: summarizer-service-config
+  namespace: journalist-bot
+  labels:
+    app: summarizer-service
+data:
+  SERVER_PORT: "8082"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-0.kafka.journalist-bot.svc.cluster.local:29092"
   AI_PRIMARY_PROVIDER: "claude"
-
-  # ── Spring Profile ───────────────────────────────────────────────
+  ZIPKIN_BASE_URL: "http://zipkin:9411"
+  SPRING_PROFILES_ACTIVE: "prod"
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# NOTIFICATION SERVICE
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notification-service-config
+  namespace: journalist-bot
+  labels:
+    app: notification-service
+data:
+  SERVER_PORT: "8083"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-0.kafka.journalist-bot.svc.cluster.local:29092"
+  MONGODB_URI: "mongodb://journalist-mongodb:27017/journalist_bot"
+  POSTGRES_URL: "jdbc:postgresql://postgres-notification:5432/postgres"
+  POSTGRES_USER: "postgres"
+  REDIS_HOST: "journalist-redis"
+  REDIS_PORT: "6379"
+  FETCHER_SERVICE_URL: "http://fetcher-service:8081"
+  SUMMARIZER_SERVICE_URL: "http://summarizer-service:8082"
+  SCHEDULER_SERVICE_URL: "http://scheduler-service:8084"
+  ZIPKIN_BASE_URL: "http://zipkin:9411"
+  SPRING_PROFILES_ACTIVE: "prod"
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# GATEWAY SERVICE
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-service-config
+  namespace: journalist-bot
+  labels:
+    app: gateway-service
+data:
+  SERVER_PORT: "8080"
+  REDIS_HOST: "journalist-redis"
+  REDIS_PORT: "6379"
+  FETCHER_SERVICE_URL: "http://fetcher-service:8081"
+  SUMMARIZER_SERVICE_URL: "http://summarizer-service:8082"
+  NOTIFICATION_SERVICE_URL: "http://notification-service:8083"
+  SCHEDULER_SERVICE_URL: "http://scheduler-service:8084"
+  ZIPKIN_BASE_URL: "http://zipkin:9411"
   SPRING_PROFILES_ACTIVE: "prod"

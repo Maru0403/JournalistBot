@@ -42,6 +42,7 @@
         <module>summarizer-service</module>
         <module>notification-service</module>
         <module>gateway-service</module>
+        <module>scheduler-service</module>  <!-- Phase 6 — tách Quartz ra service riêng -->
     </modules>
 
     <!-- ── Shared properties ─────────────────────────────────────────────── -->
@@ -149,6 +150,10 @@
                 <artifactId>mapstruct</artifactId>
                 <version>${mapstruct.version}</version>
             </dependency>
+
+            <!-- Phase 6: Zipkin Distributed Tracing — version managed by Spring Boot BOM -->
+            <!-- micrometer-tracing-bridge-brave + zipkin-reporter-brave -->
+            <!-- Không cần khai báo version vì Spring Boot parent BOM quản lý -->
 
         </dependencies>
     </dependencyManagement>

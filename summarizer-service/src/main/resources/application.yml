@@ -50,8 +50,14 @@ resilience4j:
         permittedNumberOfCallsInHalfOpenState: 3
         registerHealthIndicator: true
 
-# ── Actuator ─────────────────────────────────────────────────────────────
+# ── Actuator + Tracing ───────────────────────────────────────────────────
 management:
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_BASE_URL:http://localhost:9411}/api/v2/spans
+  tracing:
+    sampling:
+      probability: 1.0
   endpoints:
     web:
       exposure:
@@ -70,4 +76,4 @@ logging:
     org.apache.kafka: WARN
     org.springframework.retry: WARN
   pattern:
-    console: "%d{HH:mm:ss} [%thread] %-5level %logger{30} - %msg%n"
+    console: "%d{HH:mm:ss} [%thread] %-5level [traceId=%X{traceId}] %logger{30} - %msg%n"

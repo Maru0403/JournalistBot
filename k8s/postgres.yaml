@@ -1,37 +1,32 @@
----
-# ── PostgreSQL PersistentVolumeClaim ─────────────────────────────────────
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: postgres-pvc
-  namespace: journalist-bot
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 5Gi
+# ── PostgreSQL per Service (Phase 6 — DB per Service pattern) ─────────────────
+# Tách thành 2 instance riêng:
+#   postgres-scheduler   → Quartz QRTZ_* tables (scheduler-service)
+#   postgres-notification → UserSubscription + BotCommand (notification-service)
 
----
-# ── PostgreSQL StatefulSet ────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# postgres-scheduler — Quartz job tables (scheduler-service)
+# ─────────────────────────────────────────────────────────────────────────────
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: journalist-postgres
+  name: postgres-scheduler
   namespace: journalist-bot
   labels:
-    app: journalist-postgres
+    app: postgres-scheduler
 spec:
-  serviceName: journalist-postgres
+  serviceName: postgres-scheduler
   replicas: 1
   selector:
     matchLabels:
-      app: journalist-postgres
+      app: postgres-scheduler
   template:
     metadata:
       labels:
-        app: journalist-postgres
+        app: postgres-scheduler
     spec:
+      securityContext:
+        runAsUser: 999
+        fsGroup: 999
       containers:
         - name: postgres
           image: postgres:16-alpine
@@ -39,45 +34,141 @@ spec:
             - containerPort: 5432
           env:
             - name: POSTGRES_DB
-              value: "postgres"
+              value: postgres
             - name: POSTGRES_USER
-              value: "postgres"
+              value: postgres
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: journalist-bot-secrets
-                  key: POSTGRES_PASSWORD
-          volumeMounts:
-            - name: postgres-data
-              mountPath: /var/lib/postgresql/data
+                  key: POSTGRES_SCHEDULER_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           resources:
             requests:
-              cpu: "100m"
+              cpu: "200m"
               memory: "256Mi"
             limits:
               cpu: "500m"
               memory: "512Mi"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
           livenessProbe:
             exec:
               command: ["pg_isready", "-U", "postgres"]
             initialDelaySeconds: 30
             periodSeconds: 10
-      volumes:
-        - name: postgres-data
-          persistentVolumeClaim:
-            claimName: postgres-pvc
-
+          volumeMounts:
+            - name: postgres-scheduler-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-scheduler-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
 ---
-# ── PostgreSQL Service (ClusterIP — internal only) ────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
-  name: journalist-postgres
+  name: postgres-scheduler
   namespace: journalist-bot
+  labels:
+    app: postgres-scheduler
 spec:
-  type: ClusterIP
+  clusterIP: None   # Headless service cho StatefulSet
   selector:
-    app: journalist-postgres
+    app: postgres-scheduler
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# postgres-notification — UserSubscription + BotCommand (notification-service)
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-notification
+  namespace: journalist-bot
+  labels:
+    app: postgres-notification
+spec:
+  serviceName: postgres-notification
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-notification
+  template:
+    metadata:
+      labels:
+        app: postgres-notification
+    spec:
+      securityContext:
+        runAsUser: 999
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: postgres
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: journalist-bot-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: postgres-notification-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-notification-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-notification
+  namespace: journalist-bot
+  labels:
+    app: postgres-notification
+spec:
+  clusterIP: None   # Headless service cho StatefulSet
+  selector:
+    app: postgres-notification
   ports:
     - port: 5432
       targetPort: 5432

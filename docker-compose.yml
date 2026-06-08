@@ -1,53 +1,34 @@
 services:
 
   # ─────────────────────────────────────────────────────────────────────────
-  # INFRASTRUCTURE
+  # INFRASTRUCTURE — Message Broker + Databases + Cache
   # ─────────────────────────────────────────────────────────────────────────
 
   # ─── Kafka (KRaft mode — không cần Zookeeper) ────────────────────────────
-  #
-  # KRaft mode: Kafka tự quản lý metadata mà không cần Zookeeper (Kafka 3.3+)
-  # KAFKA_PROCESS_ROLES: broker,controller → 1 container làm cả 2 vai
-  # CLUSTER_ID: phải là base64 UUID cố định — thay đổi sẽ mất data
-  #
-  # Topics được tạo tự động khi producer gửi message lần đầu (auto.create.topics=true)
-  # Để production: tạo topic thủ công với partition/replication factor phù hợp
   kafka:
     image: confluentinc/cp-kafka:7.7.0
     container_name: journalist-kafka
     restart: unless-stopped
     ports:
-      - "9092:9092"     # External (host machine → Kafka)
-      - "9093:9093"     # Controller (internal KRaft communication)
+      - "9092:9092"
+      - "9093:9093"
     environment:
-      # ── KRaft Identity ──────────────────────────────────────────────────
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"   # base64 UUID — KHÔNG thay đổi sau khi init
-
-      # ── Listeners ───────────────────────────────────────────────────────
-      # PLAINTEXT       → các service trong Docker network dùng
-      # PLAINTEXT_HOST  → host machine (mvn spring-boot:run local) dùng
-      # CONTROLLER      → KRaft internal (chỉ broker-to-controller)
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
       KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
       KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092"
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
       KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
-
-      # ── Topic defaults ───────────────────────────────────────────────────
-      KAFKA_NUM_PARTITIONS: 3                  # 3 partition → 3 consumer thread song song
-      KAFKA_DEFAULT_REPLICATION_FACTOR: 1      # Single broker local — production dùng 3
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
       KAFKA_MIN_INSYNC_REPLICAS: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"  # Tự tạo topic khi producer gửi lần đầu
-      KAFKA_LOG_RETENTION_HOURS: 24            # Giữ message 24h — đủ để re-consume nếu service down
-
-      # ── Performance ──────────────────────────────────────────────────────
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
       KAFKA_LOG_SEGMENT_BYTES: 1073741824
-      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
@@ -55,7 +36,7 @@ services:
       interval: 15s
       timeout: 10s
       retries: 10
-      start_period: 30s    # Kafka KRaft cần ~20s để init lần đầu
+      start_period: 30s
     networks:
       - bot-network
 
@@ -76,10 +57,33 @@ services:
     networks:
       - bot-network
 
-  # ─── PostgreSQL ───────────────────────────────────────────────────────────
-  postgres:
+  # ─── PostgreSQL for scheduler-service (Quartz job persistence) ───────────
+  # Phase 6: DB per service — postgres-scheduler chỉ cho Quartz QRTZ_* tables
+  postgres-scheduler:
     image: postgres:16-alpine
-    container_name: journalist-postgres
+    container_name: journalist-postgres-scheduler
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "123789"
+    ports:
+      - "5433:5432"     # Port 5433 để tránh conflict với postgres-notification
+    volumes:
+      - postgres_scheduler_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bot-network
+
+  # ─── PostgreSQL for notification-service (Subscriptions + BotCommands) ───
+  # Phase 6: DB per service — postgres-notification chỉ cho notification data
+  postgres-notification:
+    image: postgres:16-alpine
+    container_name: journalist-postgres-notification
     restart: unless-stopped
     environment:
       POSTGRES_DB: postgres
@@ -88,7 +92,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_notification_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -116,13 +120,167 @@ services:
       - bot-network
 
   # ─────────────────────────────────────────────────────────────────────────
-  # MICROSERVICES
-  # Build từng service bằng: docker-compose build fetcher-service
-  # Run tất cả:              docker-compose up -d
-  # Run chỉ infra:           docker-compose up -d kafka mongodb postgres redis
+  # OBSERVABILITY STACK (Phase 6)
+  # Zipkin: distributed tracing
+  # Prometheus: metrics scraping
+  # Grafana: dashboards (Prometheus + Loki)
+  # Loki: centralized log aggregation
+  # Promtail: log collector (docker container logs → Loki)
   # ─────────────────────────────────────────────────────────────────────────
 
+  # ─── Zipkin (Distributed Tracing) ────────────────────────────────────────
+  # Truy cập: http://localhost:9411
+  # Tìm trace theo traceId khi debug lỗi across services
+  zipkin:
+    image: openzipkin/zipkin:3.4
+    container_name: journalist-zipkin
+    restart: unless-stopped
+    ports:
+      - "9411:9411"
+    environment:
+      STORAGE_TYPE: mem   # In-memory — production dùng Elasticsearch hoặc Cassandra
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9411/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bot-network
+
+  # ─── Prometheus (Metrics Scraping) ───────────────────────────────────────
+  # Truy cập: http://localhost:9090
+  # Scrape /actuator/prometheus từ tất cả services mỗi 15s
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: journalist-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bot-network
+
+  # ─── Loki (Centralized Log Aggregation) ──────────────────────────────────
+  # Không cần truy cập trực tiếp — Grafana sẽ query Loki
+  loki:
+    image: grafana/loki:3.2.0
+    container_name: journalist-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bot-network
+
+  # ─── Promtail (Log Collector: Docker → Loki) ─────────────────────────────
+  # Collect stdout logs từ tất cả containers trong bot-network → gửi Loki
+  promtail:
+    image: grafana/promtail:3.2.0
+    container_name: journalist-promtail
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - bot-network
+
+  # ─── Grafana (Dashboards: Prometheus + Loki) ─────────────────────────────
+  # Truy cập: http://localhost:3000 — admin/admin (đổi password sau khi login)
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: journalist-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bot-network
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # MICROSERVICES
+  # Thứ tự khởi động: kafka → databases → scheduler → fetcher → summarizer → notification → gateway
+  # ─────────────────────────────────────────────────────────────────────────
+
+  # ─── Scheduler Service (Phase 6) ─────────────────────────────────────────
+  # Quartz scheduler tách khỏi fetcher-service
+  # Publish ScheduleTriggerEvent → Kafka → fetcher-service consume
+  scheduler-service:
+    build:
+      context: .
+      dockerfile: scheduler-service/Dockerfile
+    container_name: journalist-scheduler
+    restart: unless-stopped
+    ports:
+      - "${SCHEDULER_PORT:-8084}:8084"
+    environment:
+      SERVER_PORT: 8084
+      # PostgreSQL riêng (Quartz tables) — DB per service
+      POSTGRES_SCHEDULER_URL: jdbc:postgresql://postgres-scheduler:5432/postgres
+      POSTGRES_SCHEDULER_USER: postgres
+      POSTGRES_SCHEDULER_PASSWORD: 123789
+      # Kafka
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      # Zipkin
+      ZIPKIN_BASE_URL: http://zipkin:9411
+      # Scheduling
+      INITIAL_DELAY_MS: ${INITIAL_DELAY_MS:-30000}
+      AI_NEWS_INTERVAL_MS: ${AI_NEWS_INTERVAL_MS:-1800000}
+      PROG_NEWS_INTERVAL_MS: ${PROG_NEWS_INTERVAL_MS:-3600000}
+      GAMEDEV_NEWS_INTERVAL_MS: ${GAMEDEV_NEWS_INTERVAL_MS:-7200000}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres-scheduler:
+        condition: service_healthy
+    networks:
+      - bot-network
+
   # ─── Fetcher Service ──────────────────────────────────────────────────────
+  # Phase 6: Không còn Quartz. Nhận ScheduleTriggerEvent từ Kafka.
+  # Không cần PostgreSQL nữa (Quartz đã chuyển sang scheduler-service)
   fetcher-service:
     build:
       context: .
@@ -133,29 +291,25 @@ services:
       - "${FETCHER_PORT:-8081}:8081"
     environment:
       SERVER_PORT: 8081
-      # Database (Quartz cần PostgreSQL)
-      POSTGRES_URL: jdbc:postgresql://postgres:5432/postgres
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 123789
       # Redis (Rate Limiter + Distributed Lock)
       REDIS_HOST: redis
       REDIS_PORT: 6379
       # Kafka
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092   # Internal Docker network port
-      # API Keys của fetcher (không có AI keys ở đây)
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      # API Keys
       NEWS_API_KEY: ${NEWS_API_KEY:-}
-      # Scheduler
-      INITIAL_DELAY_MS: ${INITIAL_DELAY_MS:-30000}
-      AI_NEWS_INTERVAL_MS: ${AI_NEWS_INTERVAL_MS:-1800000}
-      PROG_NEWS_INTERVAL_MS: ${PROG_NEWS_INTERVAL_MS:-3600000}
-      GAMEDEV_NEWS_INTERVAL_MS: ${GAMEDEV_NEWS_INTERVAL_MS:-7200000}
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
+      REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-journalist-bot/2.0 by /u/journalist_bot_dev}
+      # Zipkin
+      ZIPKIN_BASE_URL: http://zipkin:9411
     depends_on:
       kafka:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
+      scheduler-service:
+        condition: service_started
     networks:
       - bot-network
 
@@ -170,12 +324,12 @@ services:
       - "${SUMMARIZER_PORT:-8082}:8082"
     environment:
       SERVER_PORT: 8082
-      # Kafka
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      # AI API Keys — chỉ service này có (principle of least privilege)
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       AI_PRIMARY_PROVIDER: ${AI_PRIMARY_PROVIDER:-claude}
+      # Zipkin
+      ZIPKIN_BASE_URL: http://zipkin:9411
     depends_on:
       kafka:
         condition: service_healthy
@@ -193,38 +347,42 @@ services:
       - "${NOTIFICATION_PORT:-8083}:8083"
     environment:
       SERVER_PORT: 8083
-      # Database (Subscription + SentArticle dedup)
+      # MongoDB (SentArticle dedup)
       MONGODB_URI: mongodb://mongodb:27017/journalist_bot
-      POSTGRES_URL: jdbc:postgresql://postgres:5432/postgres
+      # PostgreSQL riêng (Subscriptions + BotCommands) — DB per service
+      POSTGRES_URL: jdbc:postgresql://postgres-notification:5432/postgres
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: 123789
-      # Redis (Distributed Lock + Dedup cache)
+      # Redis
       REDIS_HOST: redis
       REDIS_PORT: 6379
       # Kafka
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      # Internal service URLs (for /news command — REST calls within bot-network)
+      # Internal URLs (Docker network)
       FETCHER_SERVICE_URL: http://fetcher-service:8081
       SUMMARIZER_SERVICE_URL: http://summarizer-service:8082
-      # Bot tokens — chỉ service này có
+      SCHEDULER_SERVICE_URL: http://scheduler-service:8084
+      # Bot tokens
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       DISCORD_NEWS_CHANNEL_ID: ${DISCORD_NEWS_CHANNEL_ID:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      # Zipkin
+      ZIPKIN_BASE_URL: http://zipkin:9411
     depends_on:
       kafka:
         condition: service_healthy
       mongodb:
         condition: service_healthy
-      postgres:
+      postgres-notification:
         condition: service_healthy
       redis:
         condition: service_healthy
       fetcher-service:
-        condition: service_started   # cần cho /news REST call
+        condition: service_started
       summarizer-service:
-        condition: service_started   # cần cho /news REST call
+        condition: service_started
     networks:
       - bot-network
 
@@ -236,18 +394,17 @@ services:
     container_name: journalist-gateway
     restart: unless-stopped
     ports:
-      - "${GATEWAY_PORT:-8080}:8080"   # Điểm vào duy nhất từ bên ngoài
+      - "${GATEWAY_PORT:-8080}:8080"
     environment:
       SERVER_PORT: 8080
-      # Service URLs (internal Docker network)
       FETCHER_SERVICE_URL: http://fetcher-service:8081
       SUMMARIZER_SERVICE_URL: http://summarizer-service:8082
       NOTIFICATION_SERVICE_URL: http://notification-service:8083
-      # Redis (IP rate limiting)
+      SCHEDULER_SERVICE_URL: http://scheduler-service:8084
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      # Security
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      ZIPKIN_BASE_URL: http://zipkin:9411
     depends_on:
       redis:
         condition: service_healthy
@@ -257,14 +414,20 @@ services:
         condition: service_started
       notification-service:
         condition: service_started
+      scheduler-service:
+        condition: service_started
     networks:
       - bot-network
 
 volumes:
   kafka_data:
   mongodb_data:
-  postgres_data:
+  postgres_scheduler_data:
+  postgres_notification_data:
   redis_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
 
 networks:
   bot-network:

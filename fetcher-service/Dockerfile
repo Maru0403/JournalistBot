@@ -17,6 +17,7 @@ COPY fetcher-service/pom.xml    fetcher-service/pom.xml
 COPY summarizer-service/pom.xml summarizer-service/pom.xml
 COPY notification-service/pom.xml notification-service/pom.xml
 COPY gateway-service/pom.xml    gateway-service/pom.xml
+COPY scheduler-service/pom.xml  scheduler-service/pom.xml
 
 # ── Step 2: Pre-download dependencies ─────────────────────────────────────────
 # -pl fetcher-service  → only this module

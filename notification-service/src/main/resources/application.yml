@@ -105,8 +105,15 @@ resilience4j:
         permittedNumberOfCallsInHalfOpenState: 2
         registerHealthIndicator: true
 
-# ─── Actuator ─────────────────────────────────────────────────────────────────
+# ─── Actuator + Tracing ───────────────────────────────────────────────────────
 management:
+  # Zipkin tracing — Spring Boot 3.x Micrometer style
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_BASE_URL:http://localhost:9411}/api/v2/spans
+  tracing:
+    sampling:
+      probability: 1.0
   endpoints:
     web:
       exposure:
@@ -126,4 +133,4 @@ logging:
     org.telegram: WARN
     org.springframework.kafka: WARN
   pattern:
-    console: "%d{HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    console: "%d{HH:mm:ss} [%thread] %-5level [traceId=%X{traceId}] %logger{36} - %msg%n"

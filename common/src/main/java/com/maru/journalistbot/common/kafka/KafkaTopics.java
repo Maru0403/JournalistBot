@@ -35,4 +35,11 @@ public final class KafkaTopics {
      * Consumer riêng sẽ log, alert, hoặc retry manual.
      */
     public static final String NEWS_FAILED = "news.failed";
+
+    /**
+     * Phase 6 — scheduler-service publish trigger event → fetcher-service consume.
+     * Tách Quartz scheduler ra khỏi fetcher-service thành service độc lập.
+     * Flow: scheduler-service → news.schedule.trigger → fetcher-service → news.fetched → ...
+     */
+    public static final String NEWS_SCHEDULE_TRIGGER = "news.schedule.trigger";
 }
