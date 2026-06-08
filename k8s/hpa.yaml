@@ -1,0 +1,157 @@
+# ── Horizontal Pod Autoscaler (HPA) — Phase 6 ─────────────────────────────────
+# Auto-scale các service dựa trên CPU/Memory
+# Prerequisite: metrics-server phải được cài trong cluster
+#   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# ── Scheduler Service HPA ─────────────────────────────────────────────────────
+# Scheduler ít workload — chỉ publish Kafka event → không cần scale nhiều
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: scheduler-service-hpa
+  namespace: journalist-bot
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: scheduler-service
+  minReplicas: 1
+  maxReplicas: 2   # Quartz isClustered=true nên scale an toàn
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300   # Không scale down quá nhanh
+      policies:
+        - type: Replicas
+          value: 1
+          periodSeconds: 60
+---
+# ── Fetcher Service HPA ───────────────────────────────────────────────────────
+# Fetcher là I/O-heavy (HTTP calls tới RSS/HN/Reddit/NewsAPI) → scale khi nhiều trigger
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fetcher-service-hpa
+  namespace: journalist-bot
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fetcher-service
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60    # Lower threshold vì I/O-heavy
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Replicas
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+---
+# ── Summarizer Service HPA ────────────────────────────────────────────────────
+# AI summarizer là CPU-heavy (Claude/Gemini API calls) → scale khi Kafka lag tăng
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: summarizer-service-hpa
+  namespace: journalist-bot
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: summarizer-service
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+---
+# ── Notification Service HPA ──────────────────────────────────────────────────
+# Notification gửi tới nhiều Discord/Telegram → scale khi số subscriber tăng
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: notification-service-hpa
+  namespace: journalist-bot
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: notification-service
+  minReplicas: 2    # Luôn 2 pod cho HA (Discord/Telegram long-lived connections)
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30   # Scale up nhanh hơn khi nhiều broadcast
+    scaleDown:
+      stabilizationWindowSeconds: 600  # Scale down chậm (tránh Discord reconnect liên tục)
+---
+# ── Gateway Service HPA ───────────────────────────────────────────────────────
+# Gateway là entry point — scale khi nhiều request từ bên ngoài
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gateway-service-hpa
+  namespace: journalist-bot
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gateway-service
+  minReplicas: 2    # Luôn 2 pod cho HA ở entry point
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300

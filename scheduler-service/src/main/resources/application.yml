@@ -1,0 +1,93 @@
+server:
+  port: ${SERVER_PORT:8084}
+
+spring:
+  application:
+    name: scheduler-service
+
+  threads:
+    virtual:
+      enabled: true   # Java 21 Virtual Threads
+
+  # ── PostgreSQL — Quartz job state (postgres-scheduler riêng) ─────────────
+  datasource:
+    url: ${POSTGRES_SCHEDULER_URL:jdbc:postgresql://localhost:5433/postgres}
+    username: ${POSTGRES_SCHEDULER_USER:postgres}
+    password: ${POSTGRES_SCHEDULER_PASSWORD:123789}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: none   # Quartz tự tạo QRTZ_* tables
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+    show-sql: false
+
+  # ── Quartz Scheduler (JDBC — cluster-safe) ───────────────────────────────
+  quartz:
+    job-store-type: jdbc
+    jdbc:
+      initialize-schema: always
+    properties:
+      org.quartz:
+        scheduler:
+          instanceName: NewsScheduler
+          instanceId: AUTO
+        jobStore:
+          class: org.springframework.scheduling.quartz.LocalDataSourceJobStore
+          driverDelegateClass: org.quartz.impl.jdbcjobstore.PostgreSQLDelegate
+          tablePrefix: QRTZ_
+          isClustered: true
+          clusterCheckinInterval: 10000
+          useProperties: false
+        threadPool:
+          threadCount: 3   # Ít hơn fetcher vì chỉ publish event, không fetch
+
+  # ── Kafka Producer ────────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      retries: 3
+
+# ── Scheduling intervals ──────────────────────────────────────────────────
+bot:
+  schedule:
+    initial-delay-ms: ${INITIAL_DELAY_MS:30000}
+    ai-news-interval-ms: ${AI_NEWS_INTERVAL_MS:1800000}       # 30 phút
+    prog-news-interval-ms: ${PROG_NEWS_INTERVAL_MS:3600000}   # 1 giờ
+    gamedev-news-interval-ms: ${GAMEDEV_NEWS_INTERVAL_MS:7200000}  # 2 giờ
+    news-fetch-limit: ${NEWS_FETCH_LIMIT:5}
+
+# ── Actuator + Tracing ───────────────────────────────────────────────────
+management:
+  zipkin:
+    tracing:
+      endpoint: ${ZIPKIN_BASE_URL:http://localhost:9411}/api/v2/spans
+  tracing:
+    sampling:
+      probability: 1.0   # 100% trace — production nên đặt 0.1
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus, scheduledtasks
+  endpoint:
+    health:
+      show-details: always
+  health:
+    circuitbreakers:
+      enabled: true
+
+# ── Logging ──────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.maru.journalistbot.scheduler: INFO
+    org.apache.kafka: WARN
+    org.quartz: WARN
+  pattern:
+    console: "%d{HH:mm:ss} [%thread] %-5level [traceId=%X{traceId}] %logger{30} - %msg%n"

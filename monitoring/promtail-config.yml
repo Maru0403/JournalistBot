@@ -1,0 +1,45 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+
+  # ── Collect logs từ tất cả Docker containers ────────────────────────────
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: network
+            values: ['journalist-bot_bot-network']  # Chỉ collect từ bot network
+
+    relabel_configs:
+      # Dùng container name làm label
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+
+      # Thêm service name label
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'service'
+
+      # Thêm project label
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'project'
+
+    pipeline_stages:
+      # Parse log pattern: "HH:mm:ss [thread] LEVEL [traceId=xxx] logger - message"
+      - regex:
+          expression: '(?P<timestamp>\d{2}:\d{2}:\d{2}) \[(?P<thread>[^\]]+)\] (?P<level>\w+) \[traceId=(?P<trace_id>[^\]]*)\] (?P<logger>[^\s]+) - (?P<message>.*)'
+      - labels:
+          level:
+          trace_id:
+      - timestamp:
+          source: timestamp
+          format: '15:04:05'
